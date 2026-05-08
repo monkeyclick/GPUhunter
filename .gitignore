@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+build/
+
+# Electron packaged apps
+*.dmg
+*.exe
+*.AppImage
+*.snap
+*.deb
+*.rpm
+*.zip
+*.tar.gz
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+aws-credentials
+credentials.json
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Photoshop source files (binary, large)
+*.psd
