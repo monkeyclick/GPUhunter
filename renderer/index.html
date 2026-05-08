@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>GPU Hunter</title>
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com;
+                 font-src 'self' https://fonts.gstatic.com;
+                 script-src 'self' https://unpkg.com;
+                 img-src 'self' data: file: https://*.tile.openstreetmap.org https://*.basemaps.cartocdn.com https://unpkg.com;
+                 connect-src 'self' https://*.tile.openstreetmap.org https://*.basemaps.cartocdn.com" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="styles.css" />
+  <!-- Sets data-theme before paint to avoid flash -->
+  <script src="theme-init.js"></script>
+</head>
+<body>
+  <aside id="sidebar">
+    <header>
+      <img src="gpulogo.png" alt="GPU Hunter" class="logo" />
+      <div class="brand">
+        <p>AWS G-series capacity finder</p>
+        <div class="row gap" style="gap:6px">
+          <button id="openDefaults" class="iconBtn" aria-label="Defaults & preferences" title="Defaults & preferences">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+          <button id="themeToggle" class="iconBtn" aria-label="Toggle theme" title="Toggle theme">
+            <svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+            </svg>
+            <svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <section>
+      <h3>AWS profile</h3>
+      <input id="profile" type="text" placeholder="default — leave blank to use env / SSO" />
+    </section>
+
+    <section>
+      <h3>Instance types</h3>
+      <div class="row gap" style="margin-bottom: 4px">
+        <button id="selectAll" class="ghost">Select all</button>
+        <button id="clearAll" class="ghost">Clear all</button>
+      </div>
+      <div id="familyList"></div>
+    </section>
+
+    <section>
+      <h3>Capacity &amp; mode</h3>
+      <label class="block">Target instance count</label>
+      <input id="targetCapacity" type="number" min="1" max="2000" value="4" />
+
+      <label class="block">Pricing model</label>
+      <div class="row gap" style="flex-wrap: wrap; gap: 12px">
+        <label><input type="radio" name="mode" value="ondemand" checked> On-Demand</label>
+        <label><input type="radio" name="mode" value="spot"> Spot</label>
+        <label><input type="radio" name="mode" value="both"> Both</label>
+      </div>
+    </section>
+
+    <section>
+      <h3>Regions</h3>
+      <label><input id="includeOptIn" type="checkbox"> Include opt-in regions</label>
+    </section>
+
+    <section style="margin-top: auto">
+      <button id="scan" class="primary">
+        <span class="spinner"></span><span class="label">Scan AWS for capacity</span>
+      </button>
+      <div id="status"></div>
+    </section>
+  </aside>
+
+  <main>
+    <nav id="tabs">
+      <button class="tab active" data-tab="map">Map</button>
+      <button class="tab" data-tab="table">Detail table</button>
+      <button class="tab" data-tab="probe">Probe</button>
+    </nav>
+
+    <section class="panel active" id="panel-map">
+      <div id="map"></div>
+      <div id="mapEmpty" class="overlay">
+        <strong>No scan results yet</strong>
+        Pick instance types in the sidebar and click <em>Scan AWS for capacity</em>.
+      </div>
+      <div id="legend" class="overlay">
+        <span><i class="dot" style="background:#22c55e"></i> 7–10 strong</span>
+        <span><i class="dot" style="background:#f59e0b"></i> 4–6 moderate</span>
+        <span><i class="dot" style="background:#ef4444"></i> 1–3 pressured</span>
+        <span><i class="dot" style="background:#4b5563"></i> no Spot signal</span>
+      </div>
+      <div id="topRegions" class="overlay" style="display:none">
+        <div class="trHeader">
+          <h4>Region summary</h4>
+          <button class="trClear ghost" title="Reset filters & sort">Reset</button>
+        </div>
+        <div class="trFilters">
+          <input class="trSearch" type="text" placeholder="search regions…" />
+          <select class="trFamily" title="Filter by instance family"></select>
+          <div class="trScoreRow">
+            <span class="trLabel">min Spot</span>
+            <input class="trMin" type="range" min="0" max="10" value="0" />
+            <span class="trMinVal">0</span>
+          </div>
+        </div>
+        <table class="trTable">
+          <thead>
+            <tr>
+              <th data-sort="region">Region</th>
+              <th data-sort="bestSpot">Spot</th>
+              <th data-sort="azCount">AZs</th>
+              <th data-sort="typeCount">Types</th>
+              <th data-sort="odCount">OD</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="trMeta muted small">—</div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-table">
+      <div class="filters row gap wrap">
+        <label>Family
+          <select id="filterFamily" multiple size="4"></select>
+        </label>
+        <label>Region
+          <select id="filterRegion" multiple size="4"></select>
+        </label>
+        <label>Min Spot score
+          <input id="filterMinScore" type="range" min="0" max="10" value="0" />
+          <span id="filterMinScoreVal">0</span>
+        </label>
+        <label>OD offered
+          <select id="filterOd">
+            <option value="any" selected>any</option>
+            <option value="yes">yes only</option>
+            <option value="no">no only</option>
+          </select>
+        </label>
+        <label style="flex:1; min-width:200px">Search
+          <input id="filterText" type="text" placeholder="region · AZ · instance type…" />
+        </label>
+        <button id="clearFilters" class="ghost" style="align-self:flex-end">Reset</button>
+        <button id="exportCsv" class="ghost" style="align-self:flex-end">Download CSV</button>
+      </div>
+      <div class="resultMeta muted small"><span id="resultCount">—</span></div>
+      <div id="selectionBar" class="selectionBar" style="display:none">
+        <span><strong class="count">0</strong> selected</span>
+        <button id="sendToProbe" class="primary inline">Send to Probe →</button>
+        <button id="clearSelection" class="ghost">Clear</button>
+      </div>
+      <div class="tableWrap">
+        <table id="detailTable">
+          <thead>
+            <tr></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-probe">
+      <h2 style="margin-top:0; font-weight:600; font-size:18px">Active capacity probe</h2>
+      <p class="muted">
+        Each probe creates an On-Demand <strong>Capacity Reservation</strong> for ~2 minutes
+        and immediately cancels it. If AWS rejects with <code>InsufficientInstanceCapacity</code>,
+        capacity is not currently available. Cost is typically <strong>&lt; $0.01 per probe</strong>
+        (per-second billing while the CR is active).
+      </p>
+
+      <div class="probeQueueHeader">
+        <h3>Probe queue <span id="queueCount" class="muted mono">(0)</span></h3>
+        <div class="row gap">
+          <button id="probeAllBtn" class="primary inline" disabled>
+            <span class="spinner"></span><span class="label">Probe all</span>
+          </button>
+          <button id="clearQueueBtn" class="ghost" disabled>Clear queue</button>
+        </div>
+      </div>
+
+      <label class="probeConfirmRow">
+        <input id="probeConfirm" type="checkbox" />
+        <span>I understand each probe creates a billable Capacity Reservation that is cancelled immediately.</span>
+      </label>
+
+      <div class="tableWrap" id="probeQueueWrap">
+        <table id="probeQueueTable">
+          <thead>
+            <tr>
+              <th>Region</th><th>AZ</th><th>Instance type</th>
+              <th style="width:80px">Count</th><th>Status</th><th style="width:140px"></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div id="probeQueueEmpty" class="emptyState">
+          <strong>No probes queued.</strong>
+          Select rows on the <em>Detail table</em> tab and click <em>Send to Probe</em>, or add manually below.
+        </div>
+      </div>
+
+      <details id="manualAdd" style="margin-top: 18px">
+        <summary>Add manually</summary>
+        <div class="row gap wrap" style="margin-top: 10px">
+          <label class="block" style="flex:1; min-width:160px">Region
+            <select id="probeManualRegion"></select>
+          </label>
+          <label class="block" style="flex:1; min-width:160px">Availability Zone
+            <select id="probeAz"></select>
+          </label>
+          <label class="block" style="flex:1; min-width:180px">Instance type
+            <select id="probeType"></select>
+          </label>
+          <label class="block" style="width:90px">Count
+            <input id="probeCount" type="number" value="1" min="1" max="64" />
+          </label>
+          <button id="addToQueueBtn" class="ghost" style="align-self:flex-end">+ Add to queue</button>
+        </div>
+        <p id="manualAddNote" class="muted small" style="margin-top: 8px">
+          Pick a region — AZs load from your AWS account on demand.
+        </p>
+      </details>
+    </section>
+  </main>
+
+  <div id="defaultsModal" class="modalBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header>
+        <h2 id="modalTitle">Defaults &amp; Preferences</h2>
+        <button class="iconBtn modalClose" aria-label="Close" data-action="close">×</button>
+      </header>
+      <div class="modalBody">
+        <section class="modalSection">
+          <h3>AWS</h3>
+          <label class="block">Profile
+            <input id="prefProfile" type="text" placeholder="default — leave blank for env / SSO" />
+          </label>
+        </section>
+
+        <section class="modalSection">
+          <h3>Appearance</h3>
+          <div class="row gap" style="gap: 16px">
+            <label><input type="radio" name="prefTheme" value="dark"> Dark</label>
+            <label><input type="radio" name="prefTheme" value="light"> Light</label>
+          </div>
+        </section>
+
+        <section class="modalSection">
+          <h3>Default GPU types</h3>
+          <p class="muted small">Pre-selected in the sidebar on launch.</p>
+          <div id="prefTypes"></div>
+        </section>
+
+        <section class="modalSection">
+          <h3>Scan</h3>
+          <label class="block">Default target capacity
+            <input id="prefTargetCapacity" type="number" min="1" max="2000" />
+          </label>
+
+          <label class="block">Default pricing model</label>
+          <div class="row gap" style="gap: 16px">
+            <label><input type="radio" name="prefMode" value="ondemand"> On-Demand</label>
+            <label><input type="radio" name="prefMode" value="spot"> Spot</label>
+            <label><input type="radio" name="prefMode" value="both"> Both</label>
+          </div>
+
+          <label class="block" style="margin-top: 12px">
+            Restrict scan to regions <span class="muted small">(empty = scan all enabled)</span>
+          </label>
+          <div id="prefRegions" class="regionGrid"></div>
+          <div class="row gap" style="margin-top: 8px">
+            <button id="prefRegionsAll" class="ghost">Select all</button>
+            <button id="prefRegionsNone" class="ghost">Clear</button>
+          </div>
+
+          <label style="display:flex; gap:8px; margin-top: 12px">
+            <input id="prefIncludeOptIn" type="checkbox" />
+            <span>Include opt-in regions <span class="muted small">(only used when no regions are restricted)</span></span>
+          </label>
+        </section>
+
+        <section class="modalSection">
+          <h3>Probe defaults</h3>
+          <label class="block">Default region
+            <select id="prefProbeRegion"></select>
+          </label>
+          <label class="block">Default count
+            <input id="prefProbeCount" type="number" min="1" max="64" />
+          </label>
+        </section>
+      </div>
+      <footer class="modalFooter">
+        <button id="prefReset" class="ghost">Reset to factory</button>
+        <div class="row gap" style="margin-left:auto; gap: 8px">
+          <button id="prefSyncFromSidebar" class="ghost" title="Copy current sidebar values into this dialog">Use current sidebar</button>
+          <button id="prefCancel" class="ghost" data-action="close">Cancel</button>
+          <button id="prefSave" class="primary inline">Save defaults</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
