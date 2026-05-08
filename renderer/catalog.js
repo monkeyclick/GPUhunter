@@ -61,6 +61,15 @@ export const INSTANCE_FAMILIES = {
       "g6e.12xlarge", "g6e.16xlarge", "g6e.24xlarge", "g6e.48xlarge",
     ],
   },
+  g7e: {
+    gpu: "NVIDIA RTX PRO 6000 Blackwell",
+    vramGb: 96,
+    arch: "x86_64",
+    sizes: [
+      "g7e.2xlarge", "g7e.4xlarge", "g7e.8xlarge",
+      "g7e.12xlarge", "g7e.24xlarge", "g7e.48xlarge",
+    ],
+  },
   i3: {
     spec: "NVMe SSD · storage-optimized",
     arch: "x86_64",
