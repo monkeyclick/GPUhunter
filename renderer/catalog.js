@@ -1,11 +1,17 @@
-// G-family instance catalog + AWS region metadata (no GovCloud, no China).
+// GPU/storage instance catalog + AWS region metadata (no GovCloud, no China).
 
 export const INSTANCE_FAMILIES = {
   g3: {
     gpu: "NVIDIA M60",
     vramGb: 8,
     arch: "x86_64",
-    sizes: ["g3s.xlarge", "g3.4xlarge", "g3.8xlarge", "g3.16xlarge"],
+    sizes: ["g3.4xlarge", "g3.8xlarge", "g3.16xlarge"],
+  },
+  g3s: {
+    gpu: "NVIDIA M60",
+    vramGb: 8,
+    arch: "x86_64",
+    sizes: ["g3s.xlarge"],
   },
   g4ad: {
     gpu: "AMD Radeon Pro V520",
@@ -69,6 +75,48 @@ export const INSTANCE_FAMILIES = {
       "g7e.2xlarge", "g7e.4xlarge", "g7e.8xlarge",
       "g7e.12xlarge", "g7e.24xlarge", "g7e.48xlarge",
     ],
+  },
+  p3: {
+    gpu: "NVIDIA V100",
+    vramGb: 16,
+    arch: "x86_64",
+    sizes: ["p3.2xlarge", "p3.8xlarge", "p3.16xlarge"],
+  },
+  p3dn: {
+    gpu: "NVIDIA V100 (32 GB)",
+    vramGb: 32,
+    arch: "x86_64",
+    sizes: ["p3dn.24xlarge"],
+  },
+  p4d: {
+    gpu: "NVIDIA A100 (40 GB)",
+    vramGb: 40,
+    arch: "x86_64",
+    sizes: ["p4d.24xlarge"],
+  },
+  p4de: {
+    gpu: "NVIDIA A100 (80 GB)",
+    vramGb: 80,
+    arch: "x86_64",
+    sizes: ["p4de.24xlarge"],
+  },
+  p5: {
+    gpu: "NVIDIA H100",
+    vramGb: 80,
+    arch: "x86_64",
+    sizes: ["p5.48xlarge"],
+  },
+  p5e: {
+    gpu: "NVIDIA H200",
+    vramGb: 141,
+    arch: "x86_64",
+    sizes: ["p5e.48xlarge"],
+  },
+  p5en: {
+    gpu: "NVIDIA H200 (network-optimized)",
+    vramGb: 141,
+    arch: "x86_64",
+    sizes: ["p5en.48xlarge"],
   },
   i3: {
     spec: "NVMe SSD · storage-optimized",
