@@ -8,7 +8,7 @@
                  style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com;
                  font-src 'self' https://fonts.gstatic.com;
                  script-src 'self' https://unpkg.com;
-                 img-src 'self' data: file: https://*.tile.openstreetmap.org https://*.basemaps.cartocdn.com https://unpkg.com;
+                 img-src 'self' data: file: https://*.tile.openstreetmap.org https://*.basemaps.cartocdn.com https://unpkg.com https://img.shields.io;
                  connect-src 'self' https://*.tile.openstreetmap.org https://*.basemaps.cartocdn.com" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -23,7 +23,7 @@
     <header>
       <img src="gpulogo.png" alt="GPU Hunter" class="logo" />
       <div class="brand">
-        <p>AWS G-series capacity finder</p>
+        <p>GPU capacity finder</p>
         <div class="row gap" style="gap:6px">
           <button id="openDefaults" class="iconBtn" aria-label="Defaults & preferences" title="Defaults & preferences">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -43,8 +43,24 @@
     </header>
 
     <section>
-      <h3>AWS profile</h3>
-      <input id="profile" type="text" placeholder="default — leave blank to use env / SSO" />
+      <h3>Cloud provider</h3>
+      <div class="row gap" style="flex-wrap:wrap; gap:12px; margin-bottom:12px">
+        <label><input type="radio" name="cloud" value="aws" checked> AWS</label>
+        <label><input type="radio" name="cloud" value="gcp"> GCP</label>
+        <label><input type="radio" name="cloud" value="both"> Both</label>
+      </div>
+
+      <div id="awsCreds">
+        <label class="block">AWS profile</label>
+        <input id="profile" type="text" placeholder="default — leave blank to use env / SSO" />
+      </div>
+
+      <div id="gcpCreds" hidden>
+        <label class="block">GCP project ID</label>
+        <input id="gcpProjectId" type="text" placeholder="my-project-id" />
+        <label class="block" style="margin-top:8px">Service account key file <span class="muted small">(optional)</span></label>
+        <input id="gcpKeyFile" type="text" placeholder="leave blank for application default credentials" />
+      </div>
     </section>
 
     <section>
@@ -76,13 +92,26 @@
 
     <section style="margin-top: auto">
       <button id="scan" class="primary">
-        <span class="spinner"></span><span class="label">Scan AWS for capacity</span>
+        <span class="spinner"></span><span class="label">Scan for capacity</span>
       </button>
       <div id="status"></div>
     </section>
+
+    <div style="padding: 12px 16px 14px; text-align: center">
+      <a href="#" onclick="window.gpuHunter.openExternal('https://buymeacoffee.com/monkeydooz'); return false;"
+         title="Buy Me A Coffee" style="display:inline-block; text-decoration:none">
+        <img src="https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFD430?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black"
+             alt="Buy Me A Coffee" style="height:28px; border-radius:4px" />
+      </a>
+    </div>
   </aside>
 
   <main>
+    <div id="updateBanner" hidden style="background:#2563eb;color:#fff;padding:7px 16px;display:flex;align-items:center;gap:10px;font-size:13px;flex-shrink:0">
+      <span id="updateMsg"></span>
+      <button id="updateInstallBtn" hidden style="margin-left:auto;padding:3px 12px;border:1px solid rgba(255,255,255,.6);background:transparent;color:#fff;border-radius:4px;cursor:pointer;font-size:12px">Restart to install</button>
+      <button id="updateDismissBtn" style="padding:2px 8px;border:none;background:transparent;color:rgba(255,255,255,.7);cursor:pointer;font-size:18px;line-height:1" title="Dismiss">×</button>
+    </div>
     <nav id="tabs">
       <button class="tab active" data-tab="map">Map</button>
       <button class="tab" data-tab="table">Detail table</button>
@@ -93,7 +122,7 @@
       <div id="map"></div>
       <div id="mapEmpty" class="overlay">
         <strong>No scan results yet</strong>
-        Pick instance types in the sidebar and click <em>Scan AWS for capacity</em>.
+        Pick instance types in the sidebar and click <em>Scan for capacity</em>.
       </div>
       <div id="legend" class="overlay">
         <span><i class="dot" style="background:#22c55e"></i> 7–10 strong</span>
@@ -200,7 +229,7 @@
         <table id="probeQueueTable">
           <thead>
             <tr>
-              <th>Region</th><th>AZ</th><th>Instance type</th>
+              <th>Cloud</th><th>Region</th><th>AZ / Zone</th><th>Instance type</th>
               <th style="width:80px">Count</th><th>Status</th><th style="width:140px"></th>
             </tr>
           </thead>
@@ -248,6 +277,25 @@
           <label class="block">Profile
             <input id="prefProfile" type="text" placeholder="default — leave blank for env / SSO" />
           </label>
+        </section>
+
+        <section class="modalSection">
+          <h3>GCP</h3>
+          <label class="block">Project ID
+            <input id="prefGcpProjectId" type="text" placeholder="my-gcp-project" />
+          </label>
+          <label class="block">Service account key file <span class="muted small">(leave blank to use ADC)</span>
+            <input id="prefGcpKeyFile" type="text" placeholder="/path/to/key.json" />
+          </label>
+        </section>
+
+        <section class="modalSection">
+          <h3>Default cloud</h3>
+          <div class="row gap" style="gap: 16px">
+            <label><input type="radio" name="prefCloud" value="aws"> AWS</label>
+            <label><input type="radio" name="prefCloud" value="gcp"> GCP</label>
+            <label><input type="radio" name="prefCloud" value="both"> Both</label>
+          </div>
         </section>
 
         <section class="modalSection">

@@ -1,4 +1,4 @@
-// GPU/storage instance catalog + AWS region metadata (no GovCloud, no China).
+// GPU/storage instance catalog — AWS + GCP (no GovCloud, no China).
 
 export const INSTANCE_FAMILIES = {
   g3: {
@@ -161,12 +161,78 @@ export const INSTANCE_FAMILIES = {
       "i7ie.48xlarge",
     ],
   },
+
+  // ---- GCP ----------------------------------------------------------------
+  "a2-highgpu": {
+    gpu: "NVIDIA A100 (40 GB)",
+    vramGb: 40,
+    arch: "x86_64",
+    cloud: "gcp",
+    sizes: ["a2-highgpu-1g", "a2-highgpu-2g", "a2-highgpu-4g", "a2-highgpu-8g"],
+  },
+  "a2-megagpu": {
+    gpu: "NVIDIA A100 (40 GB)",
+    vramGb: 40,
+    arch: "x86_64",
+    cloud: "gcp",
+    sizes: ["a2-megagpu-16g"],
+  },
+  "a2-ultragpu": {
+    gpu: "NVIDIA A100 (80 GB)",
+    vramGb: 80,
+    arch: "x86_64",
+    cloud: "gcp",
+    sizes: ["a2-ultragpu-1g", "a2-ultragpu-2g", "a2-ultragpu-4g", "a2-ultragpu-8g"],
+  },
+  "g2-standard": {
+    gpu: "NVIDIA L4",
+    vramGb: 24,
+    arch: "x86_64",
+    cloud: "gcp",
+    sizes: [
+      "g2-standard-4", "g2-standard-8", "g2-standard-12", "g2-standard-16",
+      "g2-standard-24", "g2-standard-32", "g2-standard-48", "g2-standard-96",
+    ],
+  },
+  "a3-highgpu": {
+    gpu: "NVIDIA H100 (80 GB SXM)",
+    vramGb: 80,
+    arch: "x86_64",
+    cloud: "gcp",
+    sizes: ["a3-highgpu-1g", "a3-highgpu-2g", "a3-highgpu-4g", "a3-highgpu-8g"],
+  },
+  "a3-megagpu": {
+    gpu: "NVIDIA H100 (80 GB SXM5)",
+    vramGb: 80,
+    arch: "x86_64",
+    cloud: "gcp",
+    sizes: ["a3-megagpu-8g"],
+  },
+  "a3-ultragpu": {
+    gpu: "NVIDIA H200 (141 GB)",
+    vramGb: 141,
+    arch: "x86_64",
+    cloud: "gcp",
+    sizes: ["a3-ultragpu-8g"],
+  },
 };
 
 export const ALL_INSTANCE_TYPES = Object.values(INSTANCE_FAMILIES).flatMap((f) => f.sizes);
 
+// GCP types use hyphens with no "." separator — build a reverse lookup.
+const _GCP_TYPE_TO_FAMILY = Object.fromEntries(
+  Object.entries(INSTANCE_FAMILIES)
+    .filter(([, m]) => m.cloud === "gcp")
+    .flatMap(([fam, m]) => m.sizes.map((s) => [s, fam]))
+);
+
 export function familyOf(instanceType) {
-  return instanceType.split(".")[0];
+  return _GCP_TYPE_TO_FAMILY[instanceType] ?? instanceType.split(".")[0];
+}
+
+// Returns "gcp" for GCP families, "aws" for everything else.
+export function cloudOf(familyMeta) {
+  return familyMeta.cloud ?? "aws";
 }
 
 // [lat, lon, friendly name, optInRequired]
@@ -201,7 +267,35 @@ export const REGIONS = {
   "me-central-1":   [25.20,   55.27,  "UAE",            true ],
   "af-south-1":     [-33.92,  18.42,  "Cape Town",      true ],
   "il-central-1":   [32.08,   34.78,  "Tel Aviv",       true ],
+
+  // ---- GCP regions --------------------------------------------------------
+  "us-central1":              [41.26,  -95.86,  "Iowa",          false],
+  "us-east1":                 [33.19,  -80.01,  "S. Carolina",   false],
+  "us-east4":                 [38.95,  -77.47,  "N. Virginia",   false],
+  "us-east5":                 [39.96,  -82.99,  "Columbus",      false],
+  "us-south1":                [32.78,  -96.80,  "Dallas",        false],
+  "us-west1":                 [45.60, -121.18,  "Oregon",        false],
+  "us-west4":                 [36.17, -115.14,  "Las Vegas",     false],
+  "northamerica-northeast1":  [45.50,  -73.57,  "Montréal",      false],
+  "southamerica-east1":       [-23.55, -46.63,  "São Paulo",     false],
+  "europe-west1":             [50.45,    3.82,  "Belgium",       false],
+  "europe-west2":             [51.51,   -0.13,  "London",        false],
+  "europe-west3":             [50.11,    8.68,  "Frankfurt",     false],
+  "europe-west4":             [53.45,    6.84,  "Netherlands",   false],
+  "europe-west6":             [47.37,    8.55,  "Zürich",        false],
+  "europe-west9":             [48.86,    2.35,  "Paris",         false],
+  "asia-east1":               [24.05,  120.55,  "Taiwan",        false],
+  "asia-northeast1":          [35.69,  139.69,  "Tokyo",         false],
+  "asia-northeast3":          [37.57,  126.98,  "Seoul",         false],
+  "asia-south1":              [19.08,   72.88,  "Mumbai",        false],
+  "asia-southeast1":          [ 1.35,  103.82,  "Singapore",     false],
+  "australia-southeast1":     [-33.87, 151.21,  "Sydney",        false],
+  "me-central1":              [25.20,   55.27,  "Doha",          false],
 };
+
+// GCP regions end with a letter immediately followed by digit(s) (no hyphen before the number).
+// AWS regions always end with a hyphen + digits (e.g. us-east-1, eu-central-2).
+export const GCP_REGIONS = new Set(Object.keys(REGIONS).filter((r) => /[a-z]\d+$/.test(r)));
 
 export function regionLabel(region) {
   const r = REGIONS[region];

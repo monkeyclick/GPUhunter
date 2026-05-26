@@ -2,16 +2,47 @@ import {
   ALL_INSTANCE_TYPES,
   INSTANCE_FAMILIES,
   REGIONS,
+  GCP_REGIONS,
   familyOf,
+  cloudOf,
   regionLabel,
   isOptIn,
 } from "./catalog.js";
 
 const api = window.gpuHunter;
+
+// ---- Auto-update banner ---------------------------------------------------
+{
+  const banner    = document.getElementById("updateBanner");
+  const msg       = document.getElementById("updateMsg");
+  const installBtn = document.getElementById("updateInstallBtn");
+  const dismissBtn = document.getElementById("updateDismissBtn");
+
+  api.onUpdateAvailable((info) => {
+    msg.textContent = `v${info.version} available — downloading…`;
+    banner.hidden = false;
+  });
+  api.onUpdateProgress((p) => {
+    msg.textContent = `Downloading update… ${p.percent}%`;
+  });
+  api.onUpdateDownloaded((info) => {
+    msg.textContent = `v${info.version} downloaded and ready.`;
+    installBtn.hidden = false;
+    dismissBtn.hidden = true; // nudge user to restart
+  });
+  api.onUpdateError((errMsg) => {
+    msg.textContent = `Update check failed — ${errMsg}`;
+    banner.hidden = false;
+  });
+  installBtn.addEventListener("click", () => api.installUpdate());
+  dismissBtn.addEventListener("click", () => { banner.hidden = true; });
+}
+
 const state = {
-  rows: [],            // [{region, az, instanceType, family, ondemandOffered, spotScore}]
+  rows: [],            // [{cloud, region, az, instanceType, family, ondemandOffered, spotScore}]
   scanRegions: [],
   mode: "both",
+  cloud: "aws",
   errors: [],
 };
 
@@ -39,10 +70,21 @@ const STORAGE_KEY = "gpuhunter:defaults";
 const THEME_KEY = "gpuhunter:theme";
 const DEFAULT_OPEN_FAMILIES = ["g5", "g6", "g6e"];
 
+function applyCloudFilter(cloud) {
+  for (const det of document.querySelectorAll("#familyList .family")) {
+    det.hidden = cloud !== "both" && det.dataset.cloud !== cloud;
+  }
+  const awsCreds = document.getElementById("awsCreds");
+  const gcpCreds = document.getElementById("gcpCreds");
+  if (awsCreds) awsCreds.hidden = cloud === "gcp";
+  if (gcpCreds) gcpCreds.hidden = cloud === "aws";
+}
+
 const familyList = document.getElementById("familyList");
 for (const [fam, meta] of Object.entries(INSTANCE_FAMILIES)) {
   const det = document.createElement("details");
   det.className = "family";
+  det.dataset.cloud = cloudOf(meta);
   det.open = DEFAULT_OPEN_FAMILIES.includes(fam);
   const initialChecked = DEFAULT_OPEN_FAMILIES.includes(fam);
   det.innerHTML = `
@@ -99,17 +141,32 @@ for (const cb of document.querySelectorAll(".typeCheck")) {
 }
 
 document.getElementById("selectAll").addEventListener("click", () => {
-  for (const el of document.querySelectorAll(".typeCheck")) el.checked = true;
+  for (const el of document.querySelectorAll(".typeCheck"))
+    if (!el.closest(".family").hidden) el.checked = true;
   for (const fam of Object.keys(INSTANCE_FAMILIES)) updateFamilyState(fam);
 });
 document.getElementById("clearAll").addEventListener("click", () => {
-  for (const el of document.querySelectorAll(".typeCheck")) el.checked = false;
+  for (const el of document.querySelectorAll(".typeCheck"))
+    if (!el.closest(".family").hidden) el.checked = false;
   for (const fam of Object.keys(INSTANCE_FAMILIES)) updateFamilyState(fam);
 });
 
 function selectedTypes() {
-  return Array.from(document.querySelectorAll(".typeCheck:checked")).map((e) => e.value);
+  return Array.from(document.querySelectorAll(".typeCheck:checked"))
+    .filter((e) => !e.closest(".family").hidden)
+    .map((e) => e.value);
 }
+
+// Cloud selector — filter families and credential sections on change.
+for (const radio of document.querySelectorAll('input[name="cloud"]')) {
+  radio.addEventListener("change", () => {
+    state.cloud = radio.value;
+    applyCloudFilter(radio.value);
+    for (const fam of Object.keys(INSTANCE_FAMILIES)) updateFamilyState(fam);
+  });
+}
+// Apply initial state (AWS default).
+applyCloudFilter("aws");
 
 // Initialize family-check tri-state for the default selections.
 for (const fam of Object.keys(INSTANCE_FAMILIES)) updateFamilyState(fam);
@@ -398,6 +455,7 @@ let sortDir = "desc"; // "asc" | "desc"
 const NUMERIC_KEYS = new Set(["spotScore"]);
 
 const COLUMNS = [
+  { key: "cloud",             label: "Cloud",       bothOnly: true },
   { key: "region",            label: "Region" },
   { key: "az",                label: "AZ" },
   { key: "instanceType",      label: "Instance type" },
@@ -408,7 +466,7 @@ const COLUMNS = [
 
 // Row selection (Detail table → Probe queue)
 const selectedRowIds = new Set();
-const rowId = (r) => `${r.region}|${r.az || ""}|${r.instanceType}`;
+const rowId = (r) => `${r.cloud || "aws"}|${r.region}|${r.az || ""}|${r.instanceType}`;
 const selectionBar = document.getElementById("selectionBar");
 
 function updateSelectionBar() {
@@ -574,19 +632,22 @@ function renderTable() {
   const headerChecked = visibleIds.length > 0 && visibleSelected === visibleIds.length;
   const headerIndeterminate = visibleSelected > 0 && visibleSelected < visibleIds.length;
 
-  // Rebuild column headers only when sort state or OD visibility changes.
+  // Rebuild column headers only when sort state, OD visibility, or cloud mode changes.
+  const showCloud = state.cloud === "both";
   const headRow = document.querySelector("#detailTable thead tr");
   if (
     headRow.dataset.sortKey !== sortKey ||
     headRow.dataset.sortDir !== sortDir ||
-    headRow.dataset.showOd !== String(showOd)
+    headRow.dataset.showOd !== String(showOd) ||
+    headRow.dataset.showCloud !== String(showCloud)
   ) {
     headRow.dataset.sortKey = sortKey;
     headRow.dataset.sortDir = sortDir;
     headRow.dataset.showOd = String(showOd);
+    headRow.dataset.showCloud = String(showCloud);
     headRow.innerHTML =
       `<th class="selectCol"><input type="checkbox" class="rowSelectAll" title="Select all visible rows"></th>` +
-      COLUMNS.filter((c) => !c.odOnly || showOd)
+      COLUMNS.filter((c) => (!c.odOnly || showOd) && (!c.bothOnly || showCloud))
         .map((c) => {
           const cls = c.key === sortKey ? ` class="sort-${sortDir}"` : "";
           return `<th data-sort="${c.key}"${cls}>${c.label}</th>`;
@@ -605,6 +666,7 @@ function renderTable() {
       const sel = selectedRowIds.has(id);
       return `<tr data-id="${id}"${sel ? ' class="selected"' : ""}>
         <td class="selectCol"><input type="checkbox" class="rowSelect"${sel ? " checked" : ""}></td>
+        ${showCloud ? `<td><span class="pill ${r.cloud || "aws"}">${(r.cloud || "aws").toUpperCase()}</span></td>` : ""}
         <td>${regionLabel(r.region)}</td>
         <td>${r.az || "—"}</td>
         <td>${r.instanceType}</td>
@@ -636,8 +698,9 @@ function renderTable() {
 
 document.getElementById("exportCsv").addEventListener("click", () => {
   const rows = [
-    ["region", "az", "instance_type", "family", "spot_score", "ondemand_offered"],
+    ["cloud", "region", "az", "instance_type", "family", "spot_score", "ondemand_offered"],
     ...state.rows.map((r) => [
+      r.cloud || "aws",
       r.region,
       r.az || "",
       r.instanceType,
@@ -692,6 +755,9 @@ async function loadAzsForRegion(region) {
     return scanned;
   }
 
+  // GCP regions don't use the AWS AZ API — zones come from scan results only.
+  if (GCP_REGIONS.has(region)) return [];
+
   const profile = document.getElementById("profile").value.trim() || null;
   try {
     const map = await api.getAzIdMap({ regions: [region], profile });
@@ -714,9 +780,10 @@ async function refreshManualAzs() {
   const azs = await loadAzsForRegion(region);
   if (azs.length === 0) {
     probeAz.innerHTML = `<option value="" disabled>No AZs available</option>`;
-    manualAddNote.innerHTML = `No AZs returned for <code>${escapeHtml(
-      region
-    )}</code>. The region may not be enabled, or your credentials lack <code>ec2:DescribeAvailabilityZones</code>.`;
+    const isGcp = GCP_REGIONS.has(region);
+    manualAddNote.innerHTML = isGcp
+      ? `No zones found for <code>${escapeHtml(region)}</code>. Run a GCP scan first to populate zones.`
+      : `No AZs returned for <code>${escapeHtml(region)}</code>. The region may not be enabled, or your credentials lack <code>ec2:DescribeAvailabilityZones</code>.`;
   } else {
     probeAz.innerHTML = azs.map((a) => `<option>${escapeHtml(a)}</option>`).join("");
     manualAddNote.innerHTML = `<code>${azs.length}</code> AZs loaded for <code>${escapeHtml(
@@ -738,11 +805,12 @@ function rebuildProbeOptions() {
 }
 
 function addToProbeQueue(row, count = 1) {
-  const id = `${row.region}|${row.az || ""}|${row.instanceType}`;
-  if (!row.az) return false; // need an AZ to probe
+  const id = rowId(row);
+  if (!row.az) return false; // need an AZ/zone to probe
   if (probeQueue.some((q) => q.id === id)) return false; // dedupe
   probeQueue.push({
     id,
+    cloud: row.cloud || "aws",
     region: row.region,
     az: row.az,
     instanceType: row.instanceType,
@@ -774,6 +842,7 @@ function renderProbeQueue() {
       const probing = it.status === "probing";
       const statusHtml = renderQueueStatus(it);
       return `<tr data-id="${escapeAttr(it.id)}">
+        <td><span class="pill ${it.cloud || "aws"}">${(it.cloud || "aws").toUpperCase()}</span></td>
         <td>${regionLabel(it.region)}</td>
         <td>${it.az}</td>
         <td>${it.instanceType}</td>
@@ -870,13 +939,30 @@ async function probeOne(id) {
   item.message = "";
   renderProbeQueue();
   try {
-    const res = await api.probe({
-      region: item.region,
-      az: item.az,
-      instanceType: item.instanceType,
-      count: item.count,
-      profile: document.getElementById("profile").value.trim() || null,
-    });
+    let res;
+    if (item.cloud === "gcp") {
+      const projectId = document.getElementById("gcpProjectId").value.trim();
+      const keyFile   = document.getElementById("gcpKeyFile").value.trim() || null;
+      if (!projectId) {
+        res = { success: false, message: "Enter a GCP Project ID in the sidebar to probe." };
+      } else {
+        res = await api.gcpProbe({
+          projectId,
+          zone: item.az,
+          machineType: item.instanceType,
+          count: item.count,
+          keyFile,
+        });
+      }
+    } else {
+      res = await api.probe({
+        region: item.region,
+        az: item.az,
+        instanceType: item.instanceType,
+        count: item.count,
+        profile: document.getElementById("profile").value.trim() || null,
+      });
+    }
     item.status = res.success ? "ok" : "err";
     item.message = res.message;
   } catch (e) {
@@ -908,6 +994,8 @@ const status$ = document.getElementById("status");
 api.onProgress((p) => {
   if (p.phase === "spot") {
     status$.textContent = `Spot scores ${p.done}/${p.total} chunks…`;
+  } else if (p.phase === "gcp") {
+    status$.textContent = `GCP zones ${p.done} (${p.zone || ""})…`;
   } else {
     status$.textContent = `Offerings ${p.done}/${p.total} (${p.region})…`;
   }
@@ -922,7 +1010,7 @@ function setStatus(msg, kind = "") {
 function setBusy(busy) {
   scanBtn.classList.toggle("busy", busy);
   scanBtn.disabled = busy;
-  scanBtn.querySelector(".label").textContent = busy ? "Scanning…" : "Scan AWS for capacity";
+  scanBtn.querySelector(".label").textContent = busy ? "Scanning…" : "Scan for capacity";
 }
 
 scanBtn.addEventListener("click", async () => {
@@ -935,70 +1023,121 @@ scanBtn.addEventListener("click", async () => {
   const profile = document.getElementById("profile").value.trim() || null;
   const targetCapacity = parseInt(document.getElementById("targetCapacity").value, 10);
   const mode = document.querySelector('input[name="mode"]:checked').value;
+  const cloud = document.querySelector('input[name="cloud"]:checked').value;
+  const gcpProjectId = document.getElementById("gcpProjectId").value.trim();
+  const gcpKeyFile = document.getElementById("gcpKeyFile").value.trim() || null;
   const includeOptInChk = document.getElementById("includeOptIn").checked;
   state.mode = mode;
+  state.cloud = cloud;
 
-  setStatus("Listing enabled regions…");
-  let enabled;
-  try {
-    enabled = await api.listRegions(profile);
-  } catch (e) {
-    setStatus(`Failed to list regions. Check credentials. ${e.message || e}`, "error");
-    setBusy(false);
-    return;
+  // Validate GCP credentials before starting.
+  if ((cloud === "gcp" || cloud === "both") && !gcpProjectId) {
+    if (cloud === "gcp") {
+      setStatus("Enter a GCP Project ID in the sidebar.", "error");
+      setBusy(false);
+      return;
+    }
   }
 
-  const preferred = (getStoredDefaults().preferredRegions || []).filter(Boolean);
-  const scanRegions = enabled.filter((r) => {
-    if (!REGIONS[r]) return false;
-    if (preferred.length > 0) return preferred.includes(r);
-    return includeOptInChk || !isOptIn(r);
-  });
-  state.scanRegions = scanRegions;
-
-  if (scanRegions.length === 0) {
-    setStatus("No regions to scan — none of your preferred regions are enabled on this account.", "error");
-    setBusy(false);
-    return;
-  }
-  setStatus(
-    `Scanning ${scanRegions.length} regions${preferred.length ? " (restricted by your preferences)" : ""}…`
-  );
-
+  // ---- AWS scan -----------------------------------------------------------
   let offerings = {};
   let spot = { results: [], errors: [] };
-  try {
-    const tasks = [];
-    if (mode === "both" || mode === "ondemand") {
-      tasks.push(
-        api.getOfferings({ regions: scanRegions, instanceTypes: types, profile }).then((o) => (offerings = o))
-      );
+  let azIdMap = {};
+  let scanRegions = [];
+
+  if (cloud === "aws" || cloud === "both") {
+    setStatus("Listing enabled regions…");
+    let enabled;
+    try {
+      enabled = await api.listRegions(profile);
+    } catch (e) {
+      setStatus(`Failed to list regions. Check credentials. ${e.message || e}`, "error");
+      setBusy(false);
+      return;
     }
-    if (mode === "both" || mode === "spot") {
-      tasks.push(
-        api
-          .getSpotScores({ instanceTypes: types, targetCapacity, regions: scanRegions, profile })
-          .then((s) => (spot = s))
+
+    const preferred = (getStoredDefaults().preferredRegions || []).filter(Boolean);
+    scanRegions = enabled.filter((r) => {
+      if (!REGIONS[r]) return false;
+      if (preferred.length > 0) return preferred.includes(r);
+      return includeOptInChk || !isOptIn(r);
+    });
+    state.scanRegions = scanRegions;
+
+    if (scanRegions.length === 0) {
+      if (cloud === "aws") {
+        setStatus("No regions to scan — none of your preferred regions are enabled on this account.", "error");
+        setBusy(false);
+        return;
+      }
+    } else {
+      setStatus(
+        `Scanning ${scanRegions.length} AWS regions${preferred.length ? " (restricted by your preferences)" : ""}…`
       );
+      const awsTypes = types.filter((t) => t.includes("."));
+      try {
+        const tasks = [];
+        if (mode === "both" || mode === "ondemand") {
+          tasks.push(
+            api.getOfferings({ regions: scanRegions, instanceTypes: awsTypes, profile }).then((o) => (offerings = o))
+          );
+        }
+        if (mode === "both" || mode === "spot") {
+          tasks.push(
+            api
+              .getSpotScores({ instanceTypes: awsTypes, targetCapacity, regions: scanRegions, profile })
+              .then((s) => (spot = s))
+          );
+        }
+        await Promise.all(tasks);
+      } catch (e) {
+        setStatus(`AWS scan failed: ${e.message || e}`, "error");
+        setBusy(false);
+        return;
+      }
+
+      if (spot.results.length) {
+        azIdMap = await api.getAzIdMap({ regions: scanRegions, profile });
+      }
     }
-    await Promise.all(tasks);
-  } catch (e) {
-    setStatus(`Scan failed: ${e.message || e}`, "error");
-    setBusy(false);
-    return;
   }
 
-  // Resolve AZ-id → AZ-name for Spot scores.
-  let azIdMap = {};
-  if (spot.results.length) {
-    azIdMap = await api.getAzIdMap({ regions: scanRegions, profile });
+  // ---- GCP scan -----------------------------------------------------------
+  let gcpOfferings = {};
+
+  if ((cloud === "gcp" || cloud === "both") && gcpProjectId) {
+    const gcpTypes = types.filter((t) => !t.includes("."));
+    if (gcpTypes.length === 0 && cloud === "gcp") {
+      setStatus("No GCP instance types selected.", "error");
+      setBusy(false);
+      return;
+    }
+    if (gcpTypes.length > 0) {
+      setStatus("Scanning GCP zones…");
+      try {
+        gcpOfferings = await api.gcpGetOfferings({
+          projectId: gcpProjectId,
+          machineTypes: gcpTypes,
+          keyFile: gcpKeyFile,
+        });
+      } catch (e) {
+        if (cloud === "gcp") {
+          setStatus(`GCP scan failed: ${e.message || e}`, "error");
+          setBusy(false);
+          return;
+        }
+        state.errors = [...(state.errors || []), { message: `GCP: ${e.message || e}` }];
+      }
+    }
   }
 
   // Build unified row list.
-  const map = new Map(); // key = region|az|type
+  const map = new Map(); // key = cloud|region|az|type
   function upsert(region, az, type, patch) {
-    const key = `${region}|${az || ""}|${type}`;
+    const rowCloud = patch.cloud || "aws";
+    const key = `${rowCloud}|${region}|${az || ""}|${type}`;
     const existing = map.get(key) || {
+      cloud: rowCloud,
       region, az: az || null, instanceType: type, family: familyOf(type),
       ondemandOffered: null, spotScore: null,
     };
@@ -1028,9 +1167,17 @@ scanBtn.addEventListener("click", async () => {
     }
   }
 
+  // GCP on-demand offerings — zone is both the AZ and the source of the region.
+  for (const [zone, zoneTypes] of Object.entries(gcpOfferings)) {
+    const region = zone.split("-").slice(0, -1).join("-");
+    for (const t of zoneTypes) {
+      upsert(region, zone, t, { ondemandOffered: true, cloud: "gcp" });
+    }
+  }
+
   state.rows = [...map.values()].map((r) => ({
     ...r,
-    ondemandOffered: knowOd ? r.ondemandOffered === true : null,
+    ondemandOffered: r.cloud === "gcp" ? r.ondemandOffered : (knowOd ? r.ondemandOffered === true : null),
   }));
   state.errors = spot.errors || [];
 
@@ -1046,7 +1193,7 @@ scanBtn.addEventListener("click", async () => {
 
   saveScanCache();
   let msg = `Scan complete · ${state.rows.length} (region, AZ, type) rows`;
-  if (state.errors.length) msg += ` · ${state.errors.length} Spot API warnings (see console)`;
+  if (state.errors.length) msg += ` · ${state.errors.length} warnings (see console)`;
   setStatus(msg, state.errors.length ? "" : "ok");
   if (state.errors.length) console.warn("Spot API warnings:", state.errors);
   setBusy(false);
@@ -1057,7 +1204,7 @@ const SCAN_CACHE_KEY = "gpuhunter:scan-cache";
 
 function saveScanCache() {
   try {
-    localStorage.setItem(SCAN_CACHE_KEY, JSON.stringify({ rows: state.rows, mode: state.mode, ts: Date.now() }));
+    localStorage.setItem(SCAN_CACHE_KEY, JSON.stringify({ rows: state.rows, mode: state.mode, cloud: state.cloud, ts: Date.now() }));
   } catch {}
 }
 
@@ -1073,10 +1220,13 @@ function loadScanCache() {
   try {
     const raw = localStorage.getItem(SCAN_CACHE_KEY);
     if (!raw) return;
-    const { rows, mode, ts } = JSON.parse(raw);
+    const { rows, mode, cloud, ts } = JSON.parse(raw);
     if (!Array.isArray(rows) || !rows.length) return;
     state.rows = rows;
     state.mode = mode || "ondemand";
+    state.cloud = cloud || "aws";
+    const cloudRadio = document.querySelector(`input[name="cloud"][value="${state.cloud}"]`);
+    if (cloudRadio) { cloudRadio.checked = true; applyCloudFilter(state.cloud); }
     rebuildFilterOptions();
     rebuildProbeOptions();
     renderMap();
@@ -1088,6 +1238,9 @@ function loadScanCache() {
 // ---------- Save / load defaults ------------------------------------------
 const FACTORY_DEFAULTS = {
   profile: "",
+  cloud: "aws",
+  gcpProjectId: "",
+  gcpKeyFile: "",
   selectedTypes: [
     ...INSTANCE_FAMILIES.g5.sizes,
     ...INSTANCE_FAMILIES.g6.sizes,
@@ -1115,6 +1268,9 @@ function readSidebarState() {
   return {
     ...stored,
     profile: document.getElementById("profile").value,
+    cloud: document.querySelector('input[name="cloud"]:checked')?.value || "aws",
+    gcpProjectId: document.getElementById("gcpProjectId").value,
+    gcpKeyFile: document.getElementById("gcpKeyFile").value,
     selectedTypes: selectedTypes(),
     targetCapacity: parseInt(document.getElementById("targetCapacity").value, 10) || 4,
     mode: document.querySelector('input[name="mode"]:checked').value,
@@ -1125,9 +1281,15 @@ function readSidebarState() {
 function applySidebarState(d) {
   if (!d || typeof d !== "object") return;
   if (typeof d.profile === "string") document.getElementById("profile").value = d.profile;
+  if (typeof d.gcpProjectId === "string") document.getElementById("gcpProjectId").value = d.gcpProjectId;
+  if (typeof d.gcpKeyFile === "string") document.getElementById("gcpKeyFile").value = d.gcpKeyFile;
   if (Number.isFinite(d.targetCapacity))
     document.getElementById("targetCapacity").value = d.targetCapacity;
   document.getElementById("includeOptIn").checked = !!d.includeOptIn;
+  if (d.cloud) {
+    const r = document.querySelector(`input[name="cloud"][value="${d.cloud}"]`);
+    if (r) { r.checked = true; applyCloudFilter(d.cloud); }
+  }
   if (d.mode) {
     const r = document.querySelector(`input[name="mode"][value="${d.mode}"]`);
     if (r) r.checked = true;
@@ -1242,6 +1404,10 @@ function populateModalProbeRegion(selectedCode) {
 
 function populateModal(d) {
   document.getElementById("prefProfile").value = d.profile || "";
+  document.getElementById("prefGcpProjectId").value = d.gcpProjectId || "";
+  document.getElementById("prefGcpKeyFile").value = d.gcpKeyFile || "";
+  const cloudRadio = document.querySelector(`input[name="prefCloud"][value="${d.cloud || "aws"}"]`);
+  if (cloudRadio) cloudRadio.checked = true;
   const themeRadio = document.querySelector(`input[name="prefTheme"][value="${currentTheme()}"]`);
   if (themeRadio) themeRadio.checked = true;
   document.getElementById("prefTargetCapacity").value = d.targetCapacity ?? 4;
@@ -1261,6 +1427,9 @@ function populateModalFromStorage() {
 function readModalState() {
   return {
     profile: document.getElementById("prefProfile").value,
+    gcpProjectId: document.getElementById("prefGcpProjectId").value.trim(),
+    gcpKeyFile: document.getElementById("prefGcpKeyFile").value.trim(),
+    cloud: document.querySelector('input[name="prefCloud"]:checked')?.value || "aws",
     selectedTypes: [...prefTypesRoot.querySelectorAll(".prefTypeCheck:checked")].map((e) => e.value),
     targetCapacity: parseInt(document.getElementById("prefTargetCapacity").value, 10) || 4,
     mode: document.querySelector('input[name="prefMode"]:checked')?.value || "ondemand",

@@ -4,13 +4,65 @@
   "description": "Find AWS G-series GPU capacity across regions and AZs.",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:linux": "electron-builder --linux --publish never",
+    "release": "electron-builder --publish always"
+  },
+  "build": {
+    "appId": "com.gpuhunter.app",
+    "productName": "GPU Hunter",
+    "copyright": "Copyright © 2025",
+    "icon": "renderer/gpulogo.png",
+    "files": [
+      "main.js",
+      "aws.js",
+      "gcp.js",
+      "preload.js",
+      "renderer/**/*",
+      "!renderer/gpulogo.psd",
+      "node_modules/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Development"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "monkeyclick",
+      "repo": "GPUhunter"
+    }
   },
   "dependencies": {
     "@aws-sdk/client-ec2": "^3.600.0",
-    "@aws-sdk/credential-providers": "^3.600.0"
+    "@aws-sdk/credential-providers": "^3.600.0",
+    "@google-cloud/compute": "^6.11.0",
+    "electron-updater": "^6.3.0",
+    "google-auth-library": "^10.0.0"
   },
   "devDependencies": {
-    "electron": "^31.0.0"
+    "electron": "^31.0.0",
+    "electron-builder": "^25.0.0"
   }
 }

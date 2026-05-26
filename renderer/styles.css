@@ -595,6 +595,8 @@ table#detailTable td.mono, table#detailTable td:nth-child(2), table#detailTable 
 }
 .pill.yes { background: var(--score-high-bg); color: var(--score-high-fg); border-color: var(--score-high-bd); }
 .pill.no  { background: var(--score-low-bg);  color: var(--score-low-fg);  border-color: var(--score-low-bd); }
+.pill.aws { background: #1a2f4a; color: #7eb8f7; border-color: #3a6ea8; }
+.pill.gcp { background: #1a3a2a; color: #6ecf8a; border-color: #2e7d52; }
 
 /* ----- Selection bar (Detail table) ----- */
 .selectionBar {

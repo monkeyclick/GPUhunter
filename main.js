@@ -3,6 +3,11 @@
 const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 const aws = require("./aws");
+const gcp = require("./gcp");
+const { autoUpdater } = require("electron-updater");
+
+autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
 
 let mainWindow;
 
@@ -33,6 +38,30 @@ app.whenReady().then(() => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+
+  // Check for updates only in packaged builds; skip during `electron .` dev runs.
+  if (app.isPackaged) {
+    setTimeout(() => autoUpdater.checkForUpdates(), 3000);
+    setInterval(() => autoUpdater.checkForUpdates(), 4 * 60 * 60 * 1000);
+  }
+});
+
+// ---- Auto-updater events --------------------------------------------------
+
+autoUpdater.on("update-available", (info) => {
+  mainWindow?.webContents.send("update:available", { version: info.version });
+});
+
+autoUpdater.on("download-progress", (p) => {
+  mainWindow?.webContents.send("update:progress", { percent: Math.round(p.percent) });
+});
+
+autoUpdater.on("update-downloaded", (info) => {
+  mainWindow?.webContents.send("update:downloaded", { version: info.version });
+});
+
+autoUpdater.on("error", (err) => {
+  mainWindow?.webContents.send("update:error", err.message || String(err));
 });
 
 app.on("window-all-closed", () => {
@@ -65,4 +94,21 @@ ipcMain.handle("aws:getAzIdMap", async (_e, { regions, profile }) => {
 
 ipcMain.handle("aws:probe", async (_e, args) => {
   return aws.probeCapacity(args);
+});
+
+ipcMain.handle("update:install", () => {
+  autoUpdater.quitAndInstall();
+});
+
+// ---- GCP IPC handlers -----------------------------------------------------
+
+ipcMain.handle("gcp:getOfferings", async (e, { projectId, machineTypes, keyFile }) => {
+  const onProgress = (done, total, zone) => {
+    e.sender.send("aws:progress", { phase: "gcp", done, total, zone });
+  };
+  return gcp.getOfferingsAggregated(projectId, machineTypes, keyFile || null, onProgress);
+});
+
+ipcMain.handle("gcp:probe", async (_e, args) => {
+  return gcp.probeCapacity(args);
 });
