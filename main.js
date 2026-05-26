@@ -52,8 +52,11 @@ ipcMain.handle("aws:getOfferings", async (e, { regions, instanceTypes, profile }
   return aws.getOfferingsMultiRegion(regions, instanceTypes, profile, onProgress);
 });
 
-ipcMain.handle("aws:getSpotScores", async (_e, { instanceTypes, targetCapacity, regions, profile }) => {
-  return aws.getSpotPlacementScores(instanceTypes, targetCapacity, regions, profile);
+ipcMain.handle("aws:getSpotScores", async (e, { instanceTypes, targetCapacity, regions, profile }) => {
+  const onProgress = (done, total) => {
+    e.sender.send("aws:progress", { phase: "spot", done, total });
+  };
+  return aws.getSpotPlacementScores(instanceTypes, targetCapacity, regions, profile, onProgress);
 });
 
 ipcMain.handle("aws:getAzIdMap", async (_e, { regions, profile }) => {

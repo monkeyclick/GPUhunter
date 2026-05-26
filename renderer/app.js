@@ -25,6 +25,11 @@ const escapeHtml = (s) =>
     .replaceAll("'", "&#39;");
 const escapeAttr = escapeHtml;
 
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
 // Pre-arch portion of the family spec line; arch is appended separately by callers.
 const familySpec = (meta) =>
   meta.spec || `${meta.gpu} · ${meta.vramGb} GB`;
@@ -445,7 +450,7 @@ filterMinScore.addEventListener("input", () => {
 filterFamily.addEventListener("change", renderTable);
 filterRegion.addEventListener("change", renderTable);
 filterOd.addEventListener("change", renderTable);
-filterText.addEventListener("input", renderTable);
+filterText.addEventListener("input", debounce(renderTable, 150));
 
 document.getElementById("clearFilters").addEventListener("click", () => {
   filterText.value = "";
@@ -569,20 +574,30 @@ function renderTable() {
   const headerChecked = visibleIds.length > 0 && visibleSelected === visibleIds.length;
   const headerIndeterminate = visibleSelected > 0 && visibleSelected < visibleIds.length;
 
-  // Render headers with selection col + data-sort + active sort class.
+  // Rebuild column headers only when sort state or OD visibility changes.
   const headRow = document.querySelector("#detailTable thead tr");
-  headRow.innerHTML =
-    `<th class="selectCol"><input type="checkbox" class="rowSelectAll" title="Select all visible rows"${
-      headerChecked ? " checked" : ""
-    }></th>` +
-    COLUMNS.filter((c) => !c.odOnly || showOd)
-      .map((c) => {
-        const cls = c.key === sortKey ? ` class="sort-${sortDir}"` : "";
-        return `<th data-sort="${c.key}"${cls}>${c.label}</th>`;
-      })
-      .join("");
+  if (
+    headRow.dataset.sortKey !== sortKey ||
+    headRow.dataset.sortDir !== sortDir ||
+    headRow.dataset.showOd !== String(showOd)
+  ) {
+    headRow.dataset.sortKey = sortKey;
+    headRow.dataset.sortDir = sortDir;
+    headRow.dataset.showOd = String(showOd);
+    headRow.innerHTML =
+      `<th class="selectCol"><input type="checkbox" class="rowSelectAll" title="Select all visible rows"></th>` +
+      COLUMNS.filter((c) => !c.odOnly || showOd)
+        .map((c) => {
+          const cls = c.key === sortKey ? ` class="sort-${sortDir}"` : "";
+          return `<th data-sort="${c.key}"${cls}>${c.label}</th>`;
+        })
+        .join("");
+  }
   const headerCb = headRow.querySelector(".rowSelectAll");
-  if (headerCb) headerCb.indeterminate = headerIndeterminate;
+  if (headerCb) {
+    headerCb.checked = headerChecked;
+    headerCb.indeterminate = headerIndeterminate;
+  }
 
   tbl.innerHTML = view
     .map((r) => {
@@ -891,7 +906,11 @@ renderProbeQueue();
 // ---------- Scan -----------------------------------------------------------
 const status$ = document.getElementById("status");
 api.onProgress((p) => {
-  status$.textContent = `Offerings ${p.done}/${p.total} (${p.region})…`;
+  if (p.phase === "spot") {
+    status$.textContent = `Spot scores ${p.done}/${p.total} chunks…`;
+  } else {
+    status$.textContent = `Offerings ${p.done}/${p.total} (${p.region})…`;
+  }
   status$.className = "";
 });
 
@@ -1025,12 +1044,46 @@ scanBtn.addEventListener("click", async () => {
   renderMap();
   renderTable();
 
+  saveScanCache();
   let msg = `Scan complete · ${state.rows.length} (region, AZ, type) rows`;
   if (state.errors.length) msg += ` · ${state.errors.length} Spot API warnings (see console)`;
   setStatus(msg, state.errors.length ? "" : "ok");
   if (state.errors.length) console.warn("Spot API warnings:", state.errors);
   setBusy(false);
 });
+
+// ---------- Scan cache (persist last results across sessions) --------------
+const SCAN_CACHE_KEY = "gpuhunter:scan-cache";
+
+function saveScanCache() {
+  try {
+    localStorage.setItem(SCAN_CACHE_KEY, JSON.stringify({ rows: state.rows, mode: state.mode, ts: Date.now() }));
+  } catch {}
+}
+
+function timeAgo(ts) {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+function loadScanCache() {
+  try {
+    const raw = localStorage.getItem(SCAN_CACHE_KEY);
+    if (!raw) return;
+    const { rows, mode, ts } = JSON.parse(raw);
+    if (!Array.isArray(rows) || !rows.length) return;
+    state.rows = rows;
+    state.mode = mode || "ondemand";
+    rebuildFilterOptions();
+    rebuildProbeOptions();
+    renderMap();
+    renderTable();
+    setStatus(`Showing cached scan from ${timeAgo(ts)} — click Scan to refresh`);
+  } catch {}
+}
 
 // ---------- Save / load defaults ------------------------------------------
 const FACTORY_DEFAULTS = {
@@ -1099,6 +1152,7 @@ function applyProbeDefaults(d) {
   const d = getStoredDefaults();
   applySidebarState(d);
   applyProbeDefaults(d);
+  loadScanCache();
 })();
 
 // ---------- Defaults modal ------------------------------------------------

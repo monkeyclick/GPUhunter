@@ -11,7 +11,8 @@ const {
 } = require("@aws-sdk/client-ec2");
 const { fromIni, fromEnv, fromNodeProviderChain } = require("@aws-sdk/credential-providers");
 
-const SPS_CHUNK = 25; // GetSpotPlacementScores caps InstanceTypes per call.
+const SPS_CHUNK = 25;       // GetSpotPlacementScores caps InstanceTypes per call.
+const SPS_CONCURRENCY = 4;  // Parallel chunk requests.
 
 function makeClient(region, profile) {
   const cfg = {
@@ -80,40 +81,57 @@ async function getOfferingsMultiRegion(regions, instanceTypes, profile, onProgre
   return out;
 }
 
-async function getSpotPlacementScores(instanceTypes, targetCapacity, regions, profile) {
+async function getSpotPlacementScores(instanceTypes, targetCapacity, regions, profile, onProgress) {
   const ec2 = makeClient("us-east-1", profile);
   const results = [];
   const errors = [];
 
+  const chunks = [];
   for (let i = 0; i < instanceTypes.length; i += SPS_CHUNK) {
-    const chunk = instanceTypes.slice(i, i + SPS_CHUNK);
-    let nextToken;
-    do {
-      try {
-        const resp = await ec2.send(
-          new GetSpotPlacementScoresCommand({
-            InstanceTypes: chunk,
-            TargetCapacity: targetCapacity,
-            SingleAvailabilityZone: true,
-            RegionNames: regions,
-            NextToken: nextToken,
-          })
-        );
-        for (const s of resp.SpotPlacementScores || []) {
-          results.push({
-            region: s.Region,
-            azId: s.AvailabilityZoneId,
-            score: s.Score,
-            instanceTypes: chunk,
-          });
-        }
-        nextToken = resp.NextToken;
-      } catch (e) {
-        errors.push({ chunk, message: e.message || String(e) });
-        break;
-      }
-    } while (nextToken);
+    chunks.push(instanceTypes.slice(i, i + SPS_CHUNK));
   }
+
+  let done = 0;
+  const queue = [...chunks];
+
+  async function worker() {
+    while (queue.length) {
+      const chunk = queue.shift();
+      let nextToken;
+      do {
+        try {
+          const resp = await ec2.send(
+            new GetSpotPlacementScoresCommand({
+              InstanceTypes: chunk,
+              TargetCapacity: targetCapacity,
+              SingleAvailabilityZone: true,
+              RegionNames: regions,
+              NextToken: nextToken,
+            })
+          );
+          for (const s of resp.SpotPlacementScores || []) {
+            results.push({
+              region: s.Region,
+              azId: s.AvailabilityZoneId,
+              score: s.Score,
+              instanceTypes: chunk,
+            });
+          }
+          nextToken = resp.NextToken;
+        } catch (e) {
+          errors.push({ chunk, message: e.message || String(e) });
+          nextToken = undefined;
+          break;
+        }
+      } while (nextToken);
+      done++;
+      if (onProgress) onProgress(done, chunks.length);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(SPS_CONCURRENCY, chunks.length || 1) }, () => worker())
+  );
 
   return { results, errors };
 }
