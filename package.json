@@ -1,7 +1,7 @@
 {
   "name": "gpu-hunter",
   "version": "0.1.0",
-  "description": "Find AWS G-series GPU capacity across regions and AZs.",
+  "description": "Find GPU instance capacity across AWS and GCP — regions, AZs, and live probing.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
