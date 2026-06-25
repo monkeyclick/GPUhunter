@@ -31,8 +31,9 @@ const api = window.gpuHunter;
     dismissBtn.hidden = true; // nudge user to restart
   });
   api.onUpdateError((errMsg) => {
-    msg.textContent = `Update check failed — ${errMsg}`;
-    banner.hidden = false;
+    // Update-check failures (offline, no published release yet, etc.) are
+    // benign — log them instead of alarming the user with a banner.
+    console.warn("Auto-update check failed:", errMsg);
   });
   installBtn.addEventListener("click", () => api.installUpdate());
   dismissBtn.addEventListener("click", () => { banner.hidden = true; });

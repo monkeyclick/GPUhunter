@@ -107,10 +107,10 @@
   </aside>
 
   <main>
-    <div id="updateBanner" hidden style="background:#2563eb;color:#fff;padding:7px 16px;display:flex;align-items:center;gap:10px;font-size:13px;flex-shrink:0">
+    <div id="updateBanner" class="update-banner" hidden>
       <span id="updateMsg"></span>
-      <button id="updateInstallBtn" hidden style="margin-left:auto;padding:3px 12px;border:1px solid rgba(255,255,255,.6);background:transparent;color:#fff;border-radius:4px;cursor:pointer;font-size:12px">Restart to install</button>
-      <button id="updateDismissBtn" style="padding:2px 8px;border:none;background:transparent;color:rgba(255,255,255,.7);cursor:pointer;font-size:18px;line-height:1" title="Dismiss">×</button>
+      <button id="updateInstallBtn" class="update-install" hidden>Restart to install</button>
+      <button id="updateDismissBtn" class="update-dismiss" title="Dismiss" aria-label="Dismiss">×</button>
     </div>
     <nav id="tabs">
       <button class="tab active" data-tab="map">Map</button>

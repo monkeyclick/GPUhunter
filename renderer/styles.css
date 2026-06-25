@@ -325,9 +325,44 @@ details.family .sizes label {
 details.family .sizes label:hover { color: var(--text-1); }
 
 /* ----- Main / topbar / tabs ----- */
-main { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
+main { display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+
+/* Auto-update banner */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 7px 16px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 13px;
+}
+/* Higher specificity than `.update-banner` so the `hidden` attribute wins. */
+.update-banner[hidden] { display: none; }
+.update-install {
+  margin-left: auto;
+  padding: 3px 12px;
+  border: 1px solid rgba(255, 255, 255, .6);
+  background: transparent;
+  color: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.update-dismiss {
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, .7);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+.update-dismiss:hover { color: #fff; }
 nav#tabs {
   display: flex;
+  flex-shrink: 0;
   gap: 2px;
   padding: 0 20px;
   background: var(--bg-1);
@@ -353,7 +388,7 @@ nav#tabs .tab.active {
 }
 
 .panel { display: none; height: 100%; overflow: auto; padding: 20px; }
-.panel.active { display: block; }
+.panel.active { display: block; flex: 1 1 auto; min-height: 0; }
 
 /* ----- Map panel ----- */
 #panel-map { padding: 0; display: none; grid-template-rows: 1fr; position: relative; background: var(--map-bg); }
