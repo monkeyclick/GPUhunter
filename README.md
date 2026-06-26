@@ -21,6 +21,41 @@ GPU Hunter queries your cloud accounts in real time and shows:
 
 ---
 
+## Getting started
+
+### Prerequisites
+
+#### AWS
+- AWS credentials configured (any of: `~/.aws/credentials` profiles, environment variables, SSO, or instance role)
+- IAM permissions: `ec2:DescribeRegions`, `ec2:DescribeInstanceTypeOfferings`, `ec2:DescribeAvailabilityZones`, `ec2:GetSpotPlacementScores`
+- For probing: `ec2:CreateCapacityReservation`, `ec2:CancelCapacityReservation`
+
+#### GCP
+- A GCP Project ID
+- Either Application Default Credentials (`gcloud auth application-default login`) or a service account key file
+- IAM role: `roles/compute.viewer` for scanning; `roles/compute.instanceAdmin.v1` (or `compute.instances.create`) for probing
+
+#### Runtime
+- [Node.js](https://nodejs.org/) 22 or later
+- (Or download a pre-built release — no Node required)
+
+### Installation
+
+#### From source
+
+```bash
+git clone https://github.com/monkeyclick/GPUhunter.git
+cd GPUhunter
+npm install
+npm start
+```
+
+#### Pre-built releases
+
+Download the latest `.dmg` (macOS), `.exe` (Windows), or `.AppImage` (Linux) from the [Releases page](../../releases). The app auto-updates when new versions are published.
+
+---
+
 ## Supported instance families
 
 ### AWS — 17 GPU families · 22 total families
@@ -63,38 +98,45 @@ Also includes I-series NVMe storage families (i3, i4i, i4g, i7i, i7ie) for refer
 
 ---
 
-## Prerequisites
+## Command-line (CLI)
 
-### AWS
-- AWS credentials configured (any of: `~/.aws/credentials` profiles, environment variables, SSO, or instance role)
-- IAM permissions: `ec2:DescribeRegions`, `ec2:DescribeInstanceTypeOfferings`, `ec2:DescribeAvailabilityZones`, `ec2:GetSpotPlacementScores`
-- For probing: `ec2:CreateCapacityReservation`, `ec2:CancelCapacityReservation`
-
-### GCP
-- A GCP Project ID
-- Either Application Default Credentials (`gcloud auth application-default login`) or a service account key file
-- IAM role: `roles/compute.viewer` for scanning; `roles/compute.instanceAdmin.v1` (or `compute.instances.create`) for probing
-
-### Runtime
-- [Node.js](https://nodejs.org/) 18 or later
-- (Or download a pre-built release — no Node required)
-
----
-
-## Installation
-
-### From source
+A headless CLI ships alongside the desktop app — same scan and probe logic, no window. Useful for scripting, CI, and remote shells. Requires **Node 22+**.
 
 ```bash
-git clone https://github.com/monkeyclick/GPUhunter.git
-cd GPUhunter
-npm install
-npm start
+npx gpuhunter --help          # or: npm i -g gpu-hunter && gpuhunter --help
+node cli.js --help            # from a source checkout
 ```
 
-### Pre-built releases
+It uses the **same credentials** as the GUI: AWS via `--profile` or the default credential chain, GCP via `--gcp-project` plus Application Default Credentials or `--gcp-key`.
 
-Download the latest `.dmg` (macOS), `.exe` (Windows), or `.AppImage` (Linux) from the [Releases page](../../releases). The app auto-updates when new versions are published.
+### Commands
+
+| Command | Purpose |
+| --- | --- |
+| `scan` | Scan for on-demand offerings and Spot placement scores |
+| `probe` | Verify real capacity for one (region/AZ, type) — creates and immediately cancels a tiny AWS capacity reservation, or runs a free GCP dry-run |
+| `list-types` | List known instance families and sizes |
+| `list-regions` | List known AWS & GCP regions |
+
+### Examples
+
+```bash
+# Scan both clouds for p5 + g5 capacity
+gpuhunter scan --families p5,g5 --cloud both --profile prod --gcp-project my-proj
+
+# Spot scores only, filter to score >= 7, in us regions
+gpuhunter scan --families g5 --mode spot --min-score 7 --region us
+
+# Machine-readable output for scripting
+gpuhunter scan --families p5 --json | jq '.rows[] | select(.spotScore > 7)'
+gpuhunter scan --families g5 --csv results.csv
+
+# Verify real capacity (AWS reservation costs <$0.01, auto-cancelled)
+gpuhunter probe --region us-east-1 --az us-east-1a --type p5.48xlarge --yes
+gpuhunter probe --zone us-central1-a --type a3-highgpu-8g --gcp-project my-proj
+```
+
+By default `scan` prints an aligned table; progress is written to stderr so piped stdout stays clean. Run `gpuhunter scan --help`-style output via `gpuhunter --help` for the full flag list (`--types`, `--target-capacity`, `--regions`, `--include-opt-in`, `--sort`, `--asc`, etc.).
 
 ---
 

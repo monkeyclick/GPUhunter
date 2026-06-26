@@ -3,8 +3,16 @@
   "version": "0.1.0",
   "description": "Find GPU instance capacity across AWS and GCP — regions, AZs, and live probing.",
   "main": "main.js",
+  "bin": {
+    "gpuhunter": "cli.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "electron .",
+    "cli": "node cli.js",
+    "scan": "node cli.js scan",
     "dist": "electron-builder --publish never",
     "dist:mac": "electron-builder --mac --publish never",
     "dist:win": "electron-builder --win --publish never",
