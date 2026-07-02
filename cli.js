@@ -10,11 +10,10 @@ const {
   INSTANCE_FAMILIES,
   ALL_INSTANCE_TYPES,
   REGIONS,
-  familyOf,
+  GCP_REGIONS,
   cloudOf,
-  regionLabel,
-  isOptIn,
 } = require("./renderer/catalog");
+const { toCsv, odLabel } = require("./renderer/format");
 
 // ---- tiny arg parser ------------------------------------------------------
 // Supports: --flag value, --flag=value, and boolean --flag.
@@ -61,25 +60,6 @@ function renderTable(rows, columns) {
   return out.join("\n");
 }
 
-const odLabel = (v) => (v === true ? "yes" : v === false ? "no" : "");
-
-const CSV_HEADER = ["cloud", "region", "az", "instance_type", "family", "spot_score", "ondemand_offered"];
-function toCsv(rows) {
-  const data = [
-    CSV_HEADER,
-    ...rows.map((r) => [
-      r.cloud || "aws",
-      r.region,
-      r.az || "",
-      r.instanceType,
-      r.family,
-      r.spotScore ?? "",
-      odLabel(r.ondemandOffered),
-    ]),
-  ];
-  return data.map((r) => r.map((c) => `"${String(c).replaceAll('"', '""')}"`).join(",")).join("\n");
-}
-
 // ---- commands -------------------------------------------------------------
 async function cmdScan(args) {
   const cloud = args.cloud || "both";
@@ -97,6 +77,15 @@ async function cmdScan(args) {
     err('Select instance types with --types or --families (e.g. --families g5,p5). See "gpuhunter list-types".');
   }
   types = [...new Set(types)];
+
+  // A typo'd type silently matches nothing in the cloud APIs — warn up front.
+  const known = new Set(ALL_INSTANCE_TYPES);
+  const unknown = types.filter((t) => !known.has(t));
+  if (unknown.length) {
+    process.stderr.write(
+      `warn: unknown instance type(s): ${unknown.join(", ")} — not in the catalog; they will still be sent to the cloud APIs.\n`
+    );
+  }
 
   const onProgress = (phase, done, total, label) => {
     const t = total ? `${done}/${total}` : `${done}`;
@@ -190,12 +179,11 @@ async function cmdProbe(args) {
     const zone = args.zone;
     if (!zone) err("--zone is required for GCP probes (e.g. us-central1-a).");
     if (!args["gcp-project"]) err("--gcp-project is required for GCP probes.");
-    process.stderr.write(`Probing GCP (dry-run, free): ${count}× ${type} in ${zone}…\n`);
+    process.stderr.write(`Probing GCP (dry-run, free, validates 1 instance): ${type} in ${zone}…\n`);
     const res = await gcp.probeCapacity({
       projectId: args["gcp-project"],
       zone,
       machineType: type,
-      count,
       keyFile: args["gcp-key"] || null,
     });
     process.stdout.write((res.success ? "✓ " : "✗ ") + res.message + "\n");
@@ -264,7 +252,7 @@ function cmdListRegions(args) {
   }
   const rows = Object.entries(REGIONS).map(([code, [lat, lon, name, optIn]]) => ({
     code,
-    cloud: /[a-z]\d+$/.test(code) ? "gcp" : "aws",
+    cloud: GCP_REGIONS.has(code) ? "gcp" : "aws",
     name,
     optIn: optIn ? "yes" : "",
   }));
@@ -341,4 +329,8 @@ async function main() {
   }
 }
 
-main().catch((e) => err(e.stack || e.message || String(e)));
+if (require.main === module) {
+  main().catch((e) => err(e.stack || e.message || String(e)));
+}
+
+module.exports = { parseArgs };

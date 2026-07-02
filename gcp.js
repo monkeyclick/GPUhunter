@@ -32,8 +32,11 @@ async function getOfferingsAggregated(projectId, machineTypes, keyFile, onProgre
 }
 
 // Probes capacity via a dry-run instance insert (no actual instance is created).
+// The dry run validates a request for a single instance — `count` is not part of
+// the request — and checks admission (args, quota, permissions) rather than
+// exercising the zonal capacity pool the way a real insert would.
 // Returns { success: bool, message: string }.
-async function probeCapacity({ projectId, zone, machineType, count, keyFile }) {
+async function probeCapacity({ projectId, zone, machineType, keyFile }) {
   try {
     const auth = new GoogleAuth({
       ...clientOpts(keyFile),
@@ -72,7 +75,7 @@ async function probeCapacity({ projectId, zone, machineType, count, keyFile }) {
     if (resp.ok) {
       return {
         success: true,
-        message: `Capacity available — dry-run confirmed (${count}× ${machineType} in ${zone})`,
+        message: `Dry-run accepted for 1× ${machineType} in ${zone} (validates quota/args; not a hard capacity guarantee)`,
       };
     }
 

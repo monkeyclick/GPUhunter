@@ -46,6 +46,7 @@ async function runScan({
   let spot = { results: [], errors: [] };
   let azIdMap = {};
   let scanRegions = [];
+  const extraErrors = [];
 
   if (wantAws) {
     let enabled;
@@ -53,6 +54,15 @@ async function runScan({
       enabled = await aws.listEnabledRegions(profile);
     } catch (e) {
       throw new Error(`Failed to list AWS regions. Check credentials. ${e.message || e}`);
+    }
+
+    // Regions enabled on the account but missing from our catalog (usually
+    // newly launched ones) — warn rather than silently skipping them.
+    const unknownAws = enabled.filter((r) => !REGIONS[r]);
+    if (unknownAws.length) {
+      extraErrors.push({
+        message: `Skipped AWS region(s) not in the catalog: ${unknownAws.join(", ")} — update REGIONS in renderer/catalog.js to scan them.`,
+      });
     }
 
     const preferred = (preferredRegions || []).filter(Boolean);
@@ -99,7 +109,6 @@ async function runScan({
 
   // ---- GCP scan -----------------------------------------------------------
   let gcpOfferings = {};
-  const extraErrors = [];
 
   if (wantGcp && gcpProjectId) {
     const gcpTypes = instanceTypes.filter((t) => !t.includes("."));
@@ -122,6 +131,23 @@ async function runScan({
   }
 
   // ---- Merge into unified rows --------------------------------------------
+  const { rows, warnings } = mergeRows({ offerings, spot, azIdMap, gcpOfferings, mode });
+  extraErrors.push(...warnings);
+
+  return { rows, errors: [...(spot.errors || []), ...extraErrors], scanRegions };
+}
+
+// Pure merge of the per-cloud API results into the unified row list.
+// Exported separately so it can be unit-tested without cloud credentials.
+//
+//   offerings     { region: { az: string[] } | { _error } }   — AWS on-demand
+//   spot          { results: [{region, azId, score, instanceTypes}] }
+//   azIdMap       { azId: azName }
+//   gcpOfferings  { zone: string[] }
+//   mode          "ondemand" | "spot" | "both"
+//
+// Returns { rows, warnings }.
+function mergeRows({ offerings = {}, spot = { results: [] }, azIdMap = {}, gcpOfferings = {}, mode = "both" }) {
   const map = new Map(); // key = cloud|region|az|type
   function upsert(region, az, type, patch) {
     const rowCloud = patch.cloud || "aws";
@@ -145,6 +171,7 @@ async function runScan({
     map.set(key, existing);
   }
 
+  const warnings = [];
   const knowOd = mode === "both" || mode === "ondemand";
 
   for (const [region, azMap] of Object.entries(offerings)) {
@@ -153,18 +180,25 @@ async function runScan({
       for (const t of types_) upsert(region, az, t, { ondemandOffered: true });
     }
   }
-  for (const s of spot.results) {
+  for (const s of spot.results || []) {
     const azName = azIdMap[s.azId] || s.azId || null;
     for (const t of s.instanceTypes || []) {
       upsert(s.region, azName, t, { spotScore: s.score });
     }
   }
   // GCP on-demand offerings — zone is both the AZ and the source of the region.
+  const unknownGcp = new Set();
   for (const [zone, zoneTypes] of Object.entries(gcpOfferings)) {
     const region = zone.split("-").slice(0, -1).join("-");
+    if (!REGIONS[region]) unknownGcp.add(region);
     for (const t of zoneTypes) {
       upsert(region, zone, t, { ondemandOffered: true, cloud: "gcp" });
     }
+  }
+  if (unknownGcp.size) {
+    warnings.push({
+      message: `GCP region(s) not in the catalog: ${[...unknownGcp].join(", ")} — rows are included but won't appear on the map until REGIONS in renderer/catalog.js is updated.`,
+    });
   }
 
   const rows = [...map.values()].map((r) => ({
@@ -172,7 +206,7 @@ async function runScan({
     ondemandOffered: r.cloud === "gcp" ? r.ondemandOffered : knowOd ? r.ondemandOffered === true : null,
   }));
 
-  return { rows, errors: [...(spot.errors || []), ...extraErrors], scanRegions };
+  return { rows, warnings };
 }
 
-module.exports = { runScan };
+module.exports = { runScan, mergeRows };

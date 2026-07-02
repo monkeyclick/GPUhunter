@@ -969,3 +969,18 @@ table#probeQueueTable button.iconBtn {
   border: 1px solid var(--border) !important;
 }
 .leaflet-control-zoom a:hover { background: var(--bg-3) !important; }
+
+/* Buy Me A Coffee badge — local replacement for the remote shields.io image. */
+.bmcBadge {
+  display: inline-block;
+  padding: 6px 14px;
+  border-radius: var(--radius-input);
+  background: #ffd430;
+  color: #1f2328;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: var(--shadow-1);
+}
+.bmcBadge:hover { filter: brightness(1.05); }

@@ -4,7 +4,12 @@ node_modules/
 # Build output
 dist/
 out/
-build/
+# (build/* rather than build/ so the entitlements re-include below can work —
+# git cannot re-include a file inside a fully excluded directory)
+build/*
+# Keep the electron-builder mac entitlements (referenced by package.json;
+# the release CI build fails without it)
+!build/entitlements.mac.plist
 
 # Electron packaged apps
 *.dmg

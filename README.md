@@ -9,11 +9,15 @@ A desktop app for finding GPU instance capacity across **AWS and Google Cloud Pl
 GPU Hunter queries your cloud accounts in real time and shows:
 
 - **On-Demand availability** — which AZs / GCP zones actually offer a given instance type
-- **Spot Placement Scores** (1–10, AWS only) — AWS's signal for how likely a Spot request will succeed
-- **Live capacity probing** — confirms real-time availability without launching a real instance
-  - AWS: short-lived Capacity Reservation (costs < $0.01 per probe)
-  - GCP: dry-run instance insert (`?dryRun=true`, free)
-- **Interactive world map** — circles sized and colored by best Spot score; click for per-AZ/zone details
+- **Spot Placement Scores** (1–10, AWS only) — AWS's signal for how likely a Spot request will succeed.
+  Scores are requested **per family** (the API scores a *set* of types as one fleet, so a score reads
+  as "a Spot fleet of this family's sizes in this AZ", not a per-size guarantee)
+- **Live capacity probing** — checks real-time availability without launching a real instance
+  - AWS: short-lived Capacity Reservation (costs < $0.01 per probe) — a hard capacity check
+  - GCP: dry-run instance insert (`?dryRun=true`, free) — validates the request (quota, args,
+    permissions) for a single instance; softer evidence than the AWS probe
+- **Interactive world map** — AWS circles sized and colored by best Spot score; GCP circles
+  blue when the region offers requested types; click for per-AZ/zone details
 - **Sortable/filterable detail table** — filter by family, region, Spot score floor, OD availability, and free text
 - **CSV export** — all results with cloud, region, AZ, family, Spot score, and OD status
 - **Scan cache** — last scan results are persisted and restored on relaunch
@@ -36,7 +40,7 @@ GPU Hunter queries your cloud accounts in real time and shows:
 - IAM role: `roles/compute.viewer` for scanning; `roles/compute.instanceAdmin.v1` (or `compute.instances.create`) for probing
 
 #### Runtime
-- [Node.js](https://nodejs.org/) 22 or later
+- [Node.js](https://nodejs.org/) 22.12 or later
 - (Or download a pre-built release — no Node required)
 
 ### Installation
@@ -53,6 +57,10 @@ npm start
 #### Pre-built releases
 
 Download the latest `.dmg` (macOS), `.exe` (Windows), or `.AppImage` (Linux) from the [Releases page](../../releases). The app auto-updates when new versions are published.
+
+> **Note (macOS):** auto-update requires code-signed builds. Until releases are signed with an
+> Apple Developer ID, macOS users need to download new versions manually (and right-click →
+> Open to bypass Gatekeeper on first launch). Windows and Linux auto-update normally.
 
 ---
 
@@ -100,10 +108,10 @@ Also includes I-series NVMe storage families (i3, i4i, i4g, i7i, i7ie) for refer
 
 ## Command-line (CLI)
 
-A headless CLI ships alongside the desktop app — same scan and probe logic, no window. Useful for scripting, CI, and remote shells. Requires **Node 22+**.
+A headless CLI ships alongside the desktop app — same scan and probe logic, no window. Useful for scripting, CI, and remote shells. Requires **Node 22.12+**.
 
 ```bash
-npx gpuhunter --help          # or: npm i -g gpu-hunter && gpuhunter --help
+npx gpu-hunter --help         # or: npm i -g gpu-hunter && gpuhunter --help
 node cli.js --help            # from a source checkout
 ```
 
@@ -114,7 +122,7 @@ It uses the **same credentials** as the GUI: AWS via `--profile` or the default 
 | Command | Purpose |
 | --- | --- |
 | `scan` | Scan for on-demand offerings and Spot placement scores |
-| `probe` | Verify real capacity for one (region/AZ, type) — creates and immediately cancels a tiny AWS capacity reservation, or runs a free GCP dry-run |
+| `probe` | Check capacity for one (region/AZ, type) — creates and immediately cancels a tiny AWS capacity reservation, or runs a free GCP dry-run (validates a single instance) |
 | `list-types` | List known instance families and sizes |
 | `list-regions` | List known AWS & GCP regions |
 
@@ -164,7 +172,7 @@ Select **Both** to scan AWS and GCP simultaneously. Results are merged into a si
 
 ### Map tab
 
-Circles represent regions; color and size reflect the best Spot score found (AWS) or availability (GCP). Click a circle for a popup with per-AZ/zone details. The **Region summary** panel lets you filter and sort; clicking a row jumps to the Detail table.
+Circles represent regions. AWS circles are colored and sized by the best Spot score found; GCP circles are blue when the region offers any of the requested types (GCP has no Spot score signal) and sized by how many types are offered. Click a circle for a popup with per-AZ/zone details. The **Region summary** panel lets you filter and sort; clicking a row jumps to the Detail table.
 
 ### Detail table tab
 
@@ -174,12 +182,12 @@ Full row-level data. Filters: family, region, Spot score floor, OD availability,
 
 Confirms real-time capacity without actually launching an instance:
 
-| Cloud | Method | Cost |
-|-------|--------|------|
-| AWS | 2-minute On-Demand Capacity Reservation, immediately cancelled | < $0.01 per probe |
-| GCP | Dry-run instance insert (`?dryRun=true`) | Free |
+| Cloud | Method | Cost | Strength |
+|-------|--------|------|----------|
+| AWS | 2-minute On-Demand Capacity Reservation, immediately cancelled | < $0.01 per probe | Hard capacity check for the requested count |
+| GCP | Dry-run instance insert (`?dryRun=true`) | Free | Validates quota/args for **one** instance — not a hard capacity guarantee |
 
-- **Available** — capacity confirmed right now.
+- **Available** — AWS: capacity confirmed right now. GCP: the dry-run was accepted.
 - **No capacity** — AWS returned `InsufficientInstanceCapacity` / GCP returned `ZONE_RESOURCE_POOL_EXHAUSTED`.
 
 Tick the confirmation checkbox before running probes.
@@ -197,7 +205,7 @@ Click the ⚙ icon to open the Defaults modal:
 
 ## Notes
 
-- Spot Placement Scores are AWS-only. The API caps 25 types per call; GPU Hunter chunks and parallelizes automatically (4 concurrent workers).
+- Spot Placement Scores are AWS-only. GPU Hunter requests them **one family per call** (the API scores the supplied type set as a single fleet, so mixing families would produce meaningless blended scores), parallelized across 4 concurrent workers.
 - Offerings data is fetched in parallel across up to 8 regions concurrently.
 - GCP uses `aggregatedList` for a single multi-zone API pass — no per-zone rate limits.
 - All cloud calls go through your local credential chain — no credentials are stored or transmitted by this app.

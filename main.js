@@ -1,17 +1,26 @@
-// Electron main process: window + IPC bridge to AWS facade.
+// Electron main process: window + IPC bridge to the cloud facades.
 
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const path = require("path");
 const aws = require("./aws");
 const gcp = require("./gcp");
+const { runScan } = require("./core/scan");
 const { autoUpdater } = require("electron-updater");
 
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
 
-let mainWindow;
+let mainWindow = null;
 
 const LOGO_PATH = path.join(__dirname, "renderer", "gpulogo.png");
+
+// The window may be closed (and destroyed) while the app stays alive on macOS,
+// so every async send must re-check the target.
+function sendToRenderer(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload);
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -23,10 +32,31 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false, // preload uses require()
+      sandbox: true,
     },
   });
+
+  // The renderer never needs to navigate or open windows; anything that looks
+  // like a link (e.g. Leaflet's attribution) goes to the system browser.
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    event.preventDefault();
+    openExternalSafe(url);
+  });
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalSafe(url);
+    return { action: "deny" };
+  });
+
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
+}
+
+function openExternalSafe(url) {
+  try {
+    if (new URL(url).protocol === "https:") shell.openExternal(url);
+  } catch {}
 }
 
 app.whenReady().then(() => {
@@ -49,19 +79,19 @@ app.whenReady().then(() => {
 // ---- Auto-updater events --------------------------------------------------
 
 autoUpdater.on("update-available", (info) => {
-  mainWindow?.webContents.send("update:available", { version: info.version });
+  sendToRenderer("update:available", { version: info.version });
 });
 
 autoUpdater.on("download-progress", (p) => {
-  mainWindow?.webContents.send("update:progress", { percent: Math.round(p.percent) });
+  sendToRenderer("update:progress", { percent: Math.round(p.percent) });
 });
 
 autoUpdater.on("update-downloaded", (info) => {
-  mainWindow?.webContents.send("update:downloaded", { version: info.version });
+  sendToRenderer("update:downloaded", { version: info.version });
 });
 
 autoUpdater.on("error", (err) => {
-  mainWindow?.webContents.send("update:error", err.message || String(err));
+  sendToRenderer("update:error", err.message || String(err));
 });
 
 app.on("window-all-closed", () => {
@@ -70,22 +100,14 @@ app.on("window-all-closed", () => {
 
 // ---- IPC handlers ---------------------------------------------------------
 
-ipcMain.handle("aws:listRegions", async (_e, { profile }) => {
-  return aws.listEnabledRegions(profile);
-});
-
-ipcMain.handle("aws:getOfferings", async (e, { regions, instanceTypes, profile }) => {
-  const onProgress = (done, total, region) => {
-    e.sender.send("aws:progress", { phase: "offerings", done, total, region });
-  };
-  return aws.getOfferingsMultiRegion(regions, instanceTypes, profile, onProgress);
-});
-
-ipcMain.handle("aws:getSpotScores", async (e, { instanceTypes, targetCapacity, regions, profile }) => {
-  const onProgress = (done, total) => {
-    e.sender.send("aws:progress", { phase: "spot", done, total });
-  };
-  return aws.getSpotPlacementScores(instanceTypes, targetCapacity, regions, profile, onProgress);
+// Full scan — shared orchestration with the CLI (core/scan.js).
+ipcMain.handle("scan:run", async (e, opts) => {
+  return runScan({
+    ...opts,
+    onProgress: (phase, done, total, label) => {
+      e.sender.send("scan:progress", { phase, done, total, label });
+    },
+  });
 });
 
 ipcMain.handle("aws:getAzIdMap", async (_e, { regions, profile }) => {
@@ -96,19 +118,14 @@ ipcMain.handle("aws:probe", async (_e, args) => {
   return aws.probeCapacity(args);
 });
 
+ipcMain.handle("gcp:probe", async (_e, args) => {
+  return gcp.probeCapacity(args);
+});
+
 ipcMain.handle("update:install", () => {
   autoUpdater.quitAndInstall();
 });
 
-// ---- GCP IPC handlers -----------------------------------------------------
-
-ipcMain.handle("gcp:getOfferings", async (e, { projectId, machineTypes, keyFile }) => {
-  const onProgress = (done, total, zone) => {
-    e.sender.send("aws:progress", { phase: "gcp", done, total, zone });
-  };
-  return gcp.getOfferingsAggregated(projectId, machineTypes, keyFile || null, onProgress);
-});
-
-ipcMain.handle("gcp:probe", async (_e, args) => {
-  return gcp.probeCapacity(args);
+ipcMain.handle("app:openExternal", (_e, url) => {
+  openExternalSafe(url);
 });

@@ -3,11 +3,11 @@ import {
   INSTANCE_FAMILIES,
   REGIONS,
   GCP_REGIONS,
-  familyOf,
   cloudOf,
   regionLabel,
   isOptIn,
 } from "./catalog.js";
+import { toCsv } from "./format.js";
 
 const api = window.gpuHunter;
 
@@ -46,6 +46,12 @@ const state = {
   cloud: "aws",
   errors: [],
 };
+
+// External links go through the main process (validated, system browser).
+document.getElementById("coffeeLink")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  api.openExternal("https://buymeacoffee.com/monkeydooz");
+});
 
 // Defined early so any module-level code below can call it.
 const escapeHtml = (s) =>
@@ -238,6 +244,10 @@ function colorForScore(score) {
   return "#ef4444";
 }
 
+// GCP has no Spot placement scores, so its circles are colored by whether the
+// region offers any of the requested types (blue = offered, gray = none).
+const GCP_OFFERED_COLOR = "#3b82f6";
+
 function radiusForScore(score) {
   const v = score ?? 2;
   return 9 + v * 1.8; // pixel radius
@@ -265,10 +275,14 @@ function renderMap() {
     const meta = REGIONS[region];
     if (!meta) continue;
     const [lat, lon] = meta;
+    const isGcp = GCP_REGIONS.has(region);
     const score = isFinite(e.bestSpot) ? e.bestSpot : null;
-    const fill = colorForScore(score);
+    const fill = isGcp
+      ? (e.odCount > 0 ? GCP_OFFERED_COLOR : colorForScore(null))
+      : colorForScore(score);
+    const radius = isGcp ? 9 + Math.min(e.types.size, 8) * 1.2 : radiusForScore(score);
     const marker = L.circleMarker([lat, lon], {
-      radius: radiusForScore(score),
+      radius,
       fillColor: fill,
       fillOpacity: 0.85,
       color: fill,
@@ -279,13 +293,15 @@ function renderMap() {
       .filter((r) => r.spotScore != null)
       .sort((a, b) => b.spotScore - a.spotScore)
       .slice(0, 3)
-      .map((r) => `<li>${r.instanceType} @ ${r.az || "?"} — <strong>${r.spotScore}</strong>/10</li>`)
+      .map((r) => `<li>${escapeHtml(r.instanceType)} @ ${escapeHtml(r.az || "?")} — <strong>${escapeHtml(r.spotScore)}</strong>/10</li>`)
       .join("");
     marker.bindPopup(
       `<div style="min-width:200px">
-        <strong>${regionLabel(region)}</strong><br/>
-        Best Spot score: <strong>${score ?? "n/a"}</strong>${score != null ? "/10" : ""}<br/>
-        AZs with data: ${e.azs.size} · types: ${e.types.size} · OD offerings: ${e.odCount}
+        <strong>${escapeHtml(regionLabel(region))}</strong><br/>
+        ${isGcp
+          ? `Types offered: <strong>${e.types.size}</strong>`
+          : `Best Spot score: <strong>${score ?? "n/a"}</strong>${score != null ? "/10" : ""}`}<br/>
+        ${isGcp ? "Zones" : "AZs"} with data: ${e.azs.size} · types: ${e.types.size} · OD offerings: ${e.odCount}
         ${top3 ? `<ul style="margin:6px 0 0 16px;padding:0">${top3}</ul>` : ""}
        </div>`
     );
@@ -410,8 +426,8 @@ function renderTopRegions() {
   const tbody = topRegionsPanel.querySelector("tbody");
   tbody.innerHTML = summary
     .map(
-      (r) => `<tr data-region="${r.region}" title="Click to view in Detail table">
-        <td>${regionLabel(r.region)}</td>
+      (r) => `<tr data-region="${escapeAttr(r.region)}" title="Click to view in Detail table">
+        <td>${escapeHtml(regionLabel(r.region))}</td>
         <td>${scoreBadge(r.bestSpot)}</td>
         <td>${r.azCount}</td>
         <td>${r.typeCount}</td>
@@ -427,10 +443,12 @@ function jumpToDetail(region) {
   document.querySelector('.tab[data-tab="table"]').click();
   // Narrow region multi-select to just this region.
   for (const opt of filterRegion.options) opt.selected = opt.value === region;
-  // Clear text/min-score so the row isn't filtered out by an unrelated filter.
+  // Reset every other filter so the region's rows can't be hidden by leftovers.
   filterText.value = "";
   filterMinScore.value = 0;
   filterMinScoreVal.textContent = "0";
+  filterOd.value = "any";
+  for (const opt of filterFamily.options) opt.selected = true;
   renderTable();
 }
 
@@ -552,6 +570,18 @@ document.querySelector("#detailTable thead").addEventListener("change", (e) => {
   renderTable();
 });
 
+// Header "select all" checkbox state, derived from the rendered rows.
+// Cheap enough to run per click — no need to rebuild the whole table.
+function syncHeaderCheckbox() {
+  const headerCb = document.querySelector("#detailTable thead .rowSelectAll");
+  if (!headerCb) return;
+  const rows = document.querySelectorAll("#detailTable tbody tr[data-id]");
+  let selected = 0;
+  for (const tr of rows) if (selectedRowIds.has(tr.dataset.id)) selected++;
+  headerCb.checked = rows.length > 0 && selected === rows.length;
+  headerCb.indeterminate = selected > 0 && selected < rows.length;
+}
+
 // Row-level checkbox toggling via delegation.
 document.querySelector("#detailTable tbody").addEventListener("change", (e) => {
   if (!e.target.matches(".rowSelect")) return;
@@ -561,22 +591,23 @@ document.querySelector("#detailTable tbody").addEventListener("change", (e) => {
   else selectedRowIds.delete(tr.dataset.id);
   tr.classList.toggle("selected", e.target.checked);
   updateSelectionBar();
-  // Re-render to update header checkbox state.
-  renderTable();
+  syncHeaderCheckbox();
 });
 
 function rebuildFilterOptions() {
   const fams = [...new Set(state.rows.map((r) => r.family))].sort();
   const regions = [...new Set(state.rows.map((r) => r.region))].sort();
-  filterFamily.innerHTML = fams.map((f) => `<option value="${f}" selected>${f}</option>`).join("");
+  filterFamily.innerHTML = fams
+    .map((f) => `<option value="${escapeAttr(f)}" selected>${escapeHtml(f)}</option>`)
+    .join("");
   filterRegion.innerHTML = regions
-    .map((r) => `<option value="${r}" selected>${regionLabel(r)}</option>`)
+    .map((r) => `<option value="${escapeAttr(r)}" selected>${escapeHtml(regionLabel(r))}</option>`)
     .join("");
   // Top-Regions family pivot (single-select with "all").
   const prevFam = trFamily.value;
   trFamily.innerHTML =
     `<option value="">all families</option>` +
-    fams.map((f) => `<option value="${f}">${f}</option>`).join("");
+    fams.map((f) => `<option value="${escapeAttr(f)}">${escapeHtml(f)}</option>`).join("");
   if (fams.includes(prevFam)) trFamily.value = prevFam;
 }
 
@@ -665,13 +696,14 @@ function renderTable() {
     .map((r) => {
       const id = rowId(r);
       const sel = selectedRowIds.has(id);
-      return `<tr data-id="${id}"${sel ? ' class="selected"' : ""}>
+      const cloud = r.cloud === "gcp" ? "gcp" : "aws";
+      return `<tr data-id="${escapeAttr(id)}"${sel ? ' class="selected"' : ""}>
         <td class="selectCol"><input type="checkbox" class="rowSelect"${sel ? " checked" : ""}></td>
-        ${showCloud ? `<td><span class="pill ${r.cloud || "aws"}">${(r.cloud || "aws").toUpperCase()}</span></td>` : ""}
-        <td>${regionLabel(r.region)}</td>
-        <td>${r.az || "—"}</td>
-        <td>${r.instanceType}</td>
-        <td>${r.family}</td>
+        ${showCloud ? `<td><span class="pill ${cloud}">${cloud.toUpperCase()}</span></td>` : ""}
+        <td>${escapeHtml(regionLabel(r.region))}</td>
+        <td>${escapeHtml(r.az || "—")}</td>
+        <td>${escapeHtml(r.instanceType)}</td>
+        <td>${escapeHtml(r.family)}</td>
         <td>${scoreBadge(r.spotScore)}</td>
         ${
           showOd
@@ -698,23 +730,13 @@ function renderTable() {
 }
 
 document.getElementById("exportCsv").addEventListener("click", () => {
-  const rows = [
-    ["cloud", "region", "az", "instance_type", "family", "spot_score", "ondemand_offered"],
-    ...state.rows.map((r) => [
-      r.cloud || "aws",
-      r.region,
-      r.az || "",
-      r.instanceType,
-      r.family,
-      r.spotScore ?? "",
-      r.ondemandOffered === true ? "yes" : r.ondemandOffered === false ? "no" : "",
-    ]),
-  ];
-  const csv = rows.map((r) => r.map((c) => `"${String(c).replaceAll('"', '""')}"`).join(",")).join("\n");
+  const csv = toCsv(state.rows);
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.href = url;
   a.download = "gpu_hunter.csv";
   a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 });
 
 // ---------- Probe tab — queue-based ---------------------------------------
@@ -842,14 +864,20 @@ function renderProbeQueue() {
     .map((it) => {
       const probing = it.status === "probing";
       const statusHtml = renderQueueStatus(it);
+      const cloud = it.cloud === "gcp" ? "gcp" : "aws";
+      // GCP probes are dry-runs that always validate a single instance.
+      const countCell =
+        cloud === "gcp"
+          ? `<span class="muted" title="GCP dry-run always validates a single instance">1</span>`
+          : `<input type="number" class="countInput" min="1" max="64" value="${it.count}"${
+              probing ? " disabled" : ""
+            }>`;
       return `<tr data-id="${escapeAttr(it.id)}">
-        <td><span class="pill ${it.cloud || "aws"}">${(it.cloud || "aws").toUpperCase()}</span></td>
-        <td>${regionLabel(it.region)}</td>
-        <td>${it.az}</td>
-        <td>${it.instanceType}</td>
-        <td><input type="number" class="countInput" min="1" max="64" value="${it.count}"${
-        probing ? " disabled" : ""
-      }></td>
+        <td><span class="pill ${cloud}">${cloud.toUpperCase()}</span></td>
+        <td>${escapeHtml(regionLabel(it.region))}</td>
+        <td>${escapeHtml(it.az)}</td>
+        <td>${escapeHtml(it.instanceType)}</td>
+        <td>${countCell}</td>
         <td>${statusHtml}</td>
         <td class="probeActions">
           <button class="probeOne" ${probing ? "disabled" : ""}>${
@@ -902,7 +930,7 @@ addToQueueBtn.addEventListener("click", () => {
     return;
   }
   const ok = addToProbeQueue(
-    { region, az, instanceType },
+    { region, az, instanceType, cloud: GCP_REGIONS.has(region) ? "gcp" : "aws" },
     parseInt(document.getElementById("probeCount").value, 10) || 1
   );
   if (!ok) setStatus("That row is already in the queue.", "");
@@ -996,12 +1024,17 @@ api.onProgress((p) => {
   if (p.phase === "spot") {
     status$.textContent = `Spot scores ${p.done}/${p.total} chunks…`;
   } else if (p.phase === "gcp") {
-    status$.textContent = `GCP zones ${p.done} (${p.zone || ""})…`;
+    status$.textContent = `GCP zones ${p.done}${p.label ? ` (${p.label})` : ""}…`;
   } else {
-    status$.textContent = `Offerings ${p.done}/${p.total} (${p.region})…`;
+    status$.textContent = `Offerings ${p.done}/${p.total}${p.label ? ` (${p.label})` : ""}…`;
   }
   status$.className = "";
 });
+
+// ipcRenderer.invoke wraps thrown errors as
+// "Error invoking remote method 'scan:run': Error: <message>" — unwrap for display.
+const cleanIpcError = (e) =>
+  String(e?.message || e).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
 
 const scanBtn = document.getElementById("scan");
 function setStatus(msg, kind = "") {
@@ -1020,167 +1053,48 @@ scanBtn.addEventListener("click", async () => {
     setStatus("Select at least one instance type.", "error");
     return;
   }
-  setBusy(true);
-  const profile = document.getElementById("profile").value.trim() || null;
-  const targetCapacity = parseInt(document.getElementById("targetCapacity").value, 10);
   const mode = document.querySelector('input[name="mode"]:checked').value;
   const cloud = document.querySelector('input[name="cloud"]:checked').value;
   const gcpProjectId = document.getElementById("gcpProjectId").value.trim();
-  const gcpKeyFile = document.getElementById("gcpKeyFile").value.trim() || null;
-  const includeOptInChk = document.getElementById("includeOptIn").checked;
+
+  // Validate GCP credentials before starting.
+  if (cloud === "gcp" && !gcpProjectId) {
+    setStatus("Enter a GCP Project ID in the sidebar.", "error");
+    return;
+  }
+  if (cloud === "gcp" && !types.some((t) => !t.includes("."))) {
+    setStatus("No GCP instance types selected.", "error");
+    return;
+  }
+
+  setBusy(true);
+  setStatus("Scanning…");
   state.mode = mode;
   state.cloud = cloud;
 
-  // Validate GCP credentials before starting.
-  if ((cloud === "gcp" || cloud === "both") && !gcpProjectId) {
-    if (cloud === "gcp") {
-      setStatus("Enter a GCP Project ID in the sidebar.", "error");
-      setBusy(false);
-      return;
-    }
-  }
-
-  // ---- AWS scan -----------------------------------------------------------
-  let offerings = {};
-  let spot = { results: [], errors: [] };
-  let azIdMap = {};
-  let scanRegions = [];
-
-  if (cloud === "aws" || cloud === "both") {
-    setStatus("Listing enabled regions…");
-    let enabled;
-    try {
-      enabled = await api.listRegions(profile);
-    } catch (e) {
-      setStatus(`Failed to list regions. Check credentials. ${e.message || e}`, "error");
-      setBusy(false);
-      return;
-    }
-
-    const preferred = (getStoredDefaults().preferredRegions || []).filter(Boolean);
-    scanRegions = enabled.filter((r) => {
-      if (!REGIONS[r]) return false;
-      if (preferred.length > 0) return preferred.includes(r);
-      return includeOptInChk || !isOptIn(r);
+  let result;
+  try {
+    // Shared orchestration with the CLI — main process runs core/scan.js.
+    result = await api.runScan({
+      cloud,
+      mode,
+      instanceTypes: types,
+      targetCapacity: parseInt(document.getElementById("targetCapacity").value, 10) || 1,
+      profile: document.getElementById("profile").value.trim() || null,
+      gcpProjectId: gcpProjectId || null,
+      gcpKeyFile: document.getElementById("gcpKeyFile").value.trim() || null,
+      preferredRegions: (getStoredDefaults().preferredRegions || []).filter(Boolean),
+      includeOptIn: document.getElementById("includeOptIn").checked,
     });
-    state.scanRegions = scanRegions;
-
-    if (scanRegions.length === 0) {
-      if (cloud === "aws") {
-        setStatus("No regions to scan — none of your preferred regions are enabled on this account.", "error");
-        setBusy(false);
-        return;
-      }
-    } else {
-      setStatus(
-        `Scanning ${scanRegions.length} AWS regions${preferred.length ? " (restricted by your preferences)" : ""}…`
-      );
-      const awsTypes = types.filter((t) => t.includes("."));
-      try {
-        const tasks = [];
-        if (mode === "both" || mode === "ondemand") {
-          tasks.push(
-            api.getOfferings({ regions: scanRegions, instanceTypes: awsTypes, profile }).then((o) => (offerings = o))
-          );
-        }
-        if (mode === "both" || mode === "spot") {
-          tasks.push(
-            api
-              .getSpotScores({ instanceTypes: awsTypes, targetCapacity, regions: scanRegions, profile })
-              .then((s) => (spot = s))
-          );
-        }
-        await Promise.all(tasks);
-      } catch (e) {
-        setStatus(`AWS scan failed: ${e.message || e}`, "error");
-        setBusy(false);
-        return;
-      }
-
-      if (spot.results.length) {
-        azIdMap = await api.getAzIdMap({ regions: scanRegions, profile });
-      }
-    }
+  } catch (e) {
+    setStatus(cleanIpcError(e), "error");
+    setBusy(false);
+    return;
   }
 
-  // ---- GCP scan -----------------------------------------------------------
-  let gcpOfferings = {};
-
-  if ((cloud === "gcp" || cloud === "both") && gcpProjectId) {
-    const gcpTypes = types.filter((t) => !t.includes("."));
-    if (gcpTypes.length === 0 && cloud === "gcp") {
-      setStatus("No GCP instance types selected.", "error");
-      setBusy(false);
-      return;
-    }
-    if (gcpTypes.length > 0) {
-      setStatus("Scanning GCP zones…");
-      try {
-        gcpOfferings = await api.gcpGetOfferings({
-          projectId: gcpProjectId,
-          machineTypes: gcpTypes,
-          keyFile: gcpKeyFile,
-        });
-      } catch (e) {
-        if (cloud === "gcp") {
-          setStatus(`GCP scan failed: ${e.message || e}`, "error");
-          setBusy(false);
-          return;
-        }
-        state.errors = [...(state.errors || []), { message: `GCP: ${e.message || e}` }];
-      }
-    }
-  }
-
-  // Build unified row list.
-  const map = new Map(); // key = cloud|region|az|type
-  function upsert(region, az, type, patch) {
-    const rowCloud = patch.cloud || "aws";
-    const key = `${rowCloud}|${region}|${az || ""}|${type}`;
-    const existing = map.get(key) || {
-      cloud: rowCloud,
-      region, az: az || null, instanceType: type, family: familyOf(type),
-      ondemandOffered: null, spotScore: null,
-    };
-    if (patch.ondemandOffered === true) existing.ondemandOffered = true;
-    else if (existing.ondemandOffered == null && patch.ondemandOffered === false)
-      existing.ondemandOffered = false;
-    if (patch.spotScore != null) {
-      existing.spotScore =
-        existing.spotScore == null ? patch.spotScore : Math.max(existing.spotScore, patch.spotScore);
-    }
-    map.set(key, existing);
-  }
-
-  // Mark unknown OD when we didn't query it.
-  const knowOd = mode === "both" || mode === "ondemand";
-
-  for (const [region, azMap] of Object.entries(offerings)) {
-    if (azMap && azMap._error) continue;
-    for (const [az, types_] of Object.entries(azMap || {})) {
-      for (const t of types_) upsert(region, az, t, { ondemandOffered: true });
-    }
-  }
-  for (const s of spot.results) {
-    const azName = azIdMap[s.azId] || s.azId || null;
-    for (const t of s.instanceTypes || []) {
-      upsert(s.region, azName, t, { spotScore: s.score });
-    }
-  }
-
-  // GCP on-demand offerings — zone is both the AZ and the source of the region.
-  for (const [zone, zoneTypes] of Object.entries(gcpOfferings)) {
-    const region = zone.split("-").slice(0, -1).join("-");
-    for (const t of zoneTypes) {
-      upsert(region, zone, t, { ondemandOffered: true, cloud: "gcp" });
-    }
-  }
-
-  state.rows = [...map.values()].map((r) => ({
-    ...r,
-    ondemandOffered: r.cloud === "gcp" ? r.ondemandOffered : (knowOd ? r.ondemandOffered === true : null),
-  }));
-  state.errors = spot.errors || [];
+  state.rows = result.rows;
+  state.scanRegions = result.scanRegions;
+  state.errors = result.errors || [];
 
   // Drop selections that no longer match any row in the new scan.
   const validIds = new Set(state.rows.map(rowId));
@@ -1228,6 +1142,8 @@ function loadScanCache() {
     state.cloud = cloud || "aws";
     const cloudRadio = document.querySelector(`input[name="cloud"][value="${state.cloud}"]`);
     if (cloudRadio) { cloudRadio.checked = true; applyCloudFilter(state.cloud); }
+    const modeRadio = document.querySelector(`input[name="mode"][value="${state.mode}"]`);
+    if (modeRadio) modeRadio.checked = true;
     rebuildFilterOptions();
     rebuildProbeOptions();
     renderMap();

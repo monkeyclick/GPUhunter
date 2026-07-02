@@ -14,6 +14,26 @@ const { fromIni, fromEnv, fromNodeProviderChain } = require("@aws-sdk/credential
 const SPS_CHUNK = 25;       // GetSpotPlacementScores caps InstanceTypes per call.
 const SPS_CONCURRENCY = 4;  // Parallel chunk requests.
 
+// GetSpotPlacementScores scores the *set* of instance types as one fleet request,
+// not each type individually. Mixing unrelated families in a call would attribute
+// a meaningless blended score to every type, so we request one family per call:
+// the score then reads as "a Spot fleet of <family> sizes in this AZ".
+function chunkByFamily(instanceTypes) {
+  const byFamily = new Map();
+  for (const t of instanceTypes) {
+    const fam = t.split(".")[0];
+    if (!byFamily.has(fam)) byFamily.set(fam, []);
+    byFamily.get(fam).push(t);
+  }
+  const chunks = [];
+  for (const types of byFamily.values()) {
+    for (let i = 0; i < types.length; i += SPS_CHUNK) {
+      chunks.push(types.slice(i, i + SPS_CHUNK));
+    }
+  }
+  return chunks;
+}
+
 function makeClient(region, profile) {
   const cfg = {
     region,
@@ -86,10 +106,7 @@ async function getSpotPlacementScores(instanceTypes, targetCapacity, regions, pr
   const results = [];
   const errors = [];
 
-  const chunks = [];
-  for (let i = 0; i < instanceTypes.length; i += SPS_CHUNK) {
-    chunks.push(instanceTypes.slice(i, i + SPS_CHUNK));
-  }
+  const chunks = chunkByFamily(instanceTypes);
 
   let done = 0;
   const queue = [...chunks];
@@ -197,4 +214,5 @@ module.exports = {
   getSpotPlacementScores,
   getAzIdNameMap,
   probeCapacity,
+  chunkByFamily, // exported for tests
 };
